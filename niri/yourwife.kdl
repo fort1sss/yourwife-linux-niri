@@ -1,0 +1,41 @@
+// Your Wife (Steam 3339420) on niri + niri-shaders.
+// Include from ~/.config/niri/config.kdl:   include "yourwife.kdl"
+// Needs: niri-shaders build with patches/niri-yourwife.patch, shaders/magenta-key.frag.
+
+// True transparency: Wine ScreenDepth=32 (set by install.sh) gives the game ARGB windows.
+// Fallback for setups where that fails: uncomment the magenta-key shader and delete user://linux_alpha.
+window-rule {
+    match app-id="^steam_app_3339420$"
+    // shader "shaders/magenta-key.frag" { uniform "tolerance" 0.3; uniform "outline_px" 0.0; uniform "outline_color" 0.85 0.85 0.85 0.9; }
+    border { off; }
+    shadow { off; }
+    focus-ring { off; }
+    draw-border-with-background false
+    // гра сама часто змінює розмір вікна — без анімації niri, інакше героїня двоїться (патч niri)
+    no-resize-animation true
+}
+
+// Wine's fallback tray strip (untitled 160x20 window): invisible, bottom-right corner.
+window-rule {
+    match app-id="^steam_app_3339420$" title="^$"
+    shader r"vec4 window_color(vec3 coords_geo, vec3 size_geo) { return vec4(0.0); }"
+    default-floating-position x=0 y=0 relative-to="bottom-right"
+}
+
+// Steam notification toasts -> bottom-right (niri-pin finishes the job when Steam sets the title late).
+window-rule {
+    match app-id="^steam$" title="^notificationtoasts"
+    open-floating true
+    open-focused false
+    default-floating-position x=12 y=12 relative-to="bottom-right"
+    border { off; }
+    shadow { off; }
+}
+
+// Separate X server only for the game (Steam launch options: DISPLAY=:2 %command%),
+// so Steam's X window does not steal hover from the character.
+spawn-at-startup "xwayland-satellite" ":2"
+// Character follows you across workspaces; Steam toasts placement (restarts itself if it dies).
+spawn-sh-at-startup "while true; do $HOME/.local/bin/niri-pin; sleep 2; done"
+// Eyes follow the cursor over the whole screen + window size sync for the game (restarts itself).
+spawn-sh-at-startup "while true; do $HOME/.local/bin/yw-gaze; sleep 2; done"

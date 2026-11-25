@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+# Тримає вибрані вікна на тому робочому столі niri, який зараз відкритий:
+# перемкнувся на інший стіл — вікно переїжджає слідом (фокус не забирає).
+# Список програм (app-id, регулярні вирази) — у PINNED нижче.
+# Запуск: niri-pin (з config через spawn-at-startup). Лог: ~/.cache/niri-pin.log
+import json, os, re, subprocess
+
+PINNED = [r"^steam_app_3339420$"]          # Your Wife
+pat = re.compile("|".join(PINNED))
+
+
+def niri_json(*args):
+    return json.loads(subprocess.run(["niri", "msg", "-j", *args], capture_output=True, text=True).stdout)
+
+
+def sync():
+    ws = niri_json("workspaces")
+    cur = next((w for w in ws if w["is_focused"]), None)
+    if not cur:
+        return
+    for w in niri_json("windows"):
+        if pat.search(w.get("app_id") or "") and w["workspace_id"] != cur["id"]:
+            subprocess.run(["niri", "msg", "action", "move-window-to-workspace",
+                            "--window-id", str(w["id"]), "--focus", "false", str(cur["idx"])],
+                           capture_output=True)
+
+
+TOAST = re.compile(r"^notificationtoasts")      # спливаючі сповіщення Steam (друг у мережі, досягнення...)
+placed = set()
+
+
+def place_toast(w):
+    """Сповіщення Steam — у правий нижній кут (12 px від країв), як на Windows.
+    Steam спершу відкриває вікно без потрібної назви, тому правило niri з позицією не спрацьовує —
+    ставимо вручну, щойно назва з'явилась. Зсув відносний: так не залежить від панелі зверху."""
+    if w["id"] in placed or (w.get("app_id") or "") != "steam" or not TOAST.search(w.get("title") or ""):
+        return
+    if not w.get("is_floating"):
+        # правило niri не спрацювало при відкритті — вікно лягло плиткою; робимо плаваючим
+        subprocess.run(["niri", "msg", "action", "toggle-window-floating", "--id", str(w["id"])], capture_output=True)
+        w = next((x for x in niri_json("windows") if x["id"] == w["id"]), None)
+        if not w:
+            return
+    L = w["layout"]
+    pos = L.get("tile_pos_in_workspace_view")
+    if not pos:
+        return
+    out = next(iter(niri_json("outputs").values()))["logical"]
+    tw, th = L["tile_size"]
+    dx = int(out["width"] - tw - 12 - pos[0])
+    dy = int(out["height"] - th - 12 - pos[1])
+    if dx or dy:
+        subprocess.run(["niri", "msg", "action", "move-floating-window", "--id", str(w["id"]),
+                        "-x", f"{dx:+d}", "-y", f"{dy:+d}"], capture_output=True)
+    placed.add(w["id"])
+
+
+def main():
+    try:
+        sync()
+    except Exception:
+        pass
+    p = subprocess.Popen(["niri", "msg", "-j", "event-stream"], stdout=subprocess.PIPE, text=True)
+    for line in p.stdout:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        try:
+            if "WorkspaceActivated" in ev and ev["WorkspaceActivated"].get("focused"):
+                sync()
+            elif "WindowOpenedOrChanged" in ev:
+                w = ev["WindowOpenedOrChanged"]["window"]
+                if pat.search(w.get("app_id") or ""):
+                    sync()
+                if (w.get("app_id") or "") == "steam":
+                    with open(os.path.expanduser("~/.cache/niri-pin.log"), "a") as f:
+                        f.write(f'{w["id"]} {w.get("title")!r} float={w.get("is_floating")} {w["layout"].get("window_size")}\n')
+                place_toast(w)
+            elif "WindowClosed" in ev:
+                placed.discard(ev["WindowClosed"]["id"])
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    import sys, time
+    if "--once" in sys.argv:
+        main()
+    else:
+        # вічний цикл: якщо щось упало (niri перезапустився, помилка) — через 2 с знову
+        while True:
+            try:
+                main()
+            except Exception:
+                pass
+            time.sleep(2)

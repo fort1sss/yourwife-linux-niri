@@ -1,0 +1,85 @@
+#!/bin/bash
+# Керування Your Wife (Steam) на Linux. Поки гра запущена — команди виконуються в ній миттєво,
+# без перезапуску (через скрипт linux_key.gd всередині гри). Якщо гра закрита — правляться її налаштування.
+#   yourwife list               — усі героїні: 8 стандартних + завантажені з Майстерні Steam
+#   yourwife char 1..8|ID|назва — вибрати героїню (номер, ID з Майстерні або частина назви)
+#   yourwife size 0.55..4.5     — розмір (1 = стандартний)
+#   yourwife top on|off         — поверх усіх вікон
+#   yourwife lock on|off        — клік крізь героїню (мишка проходить до вікон під нею)
+#   yourwife reset              — стандартне місце, розмір і героїня 1
+#   yourwife menu | settings | workshop | help — відкрити вікна гри
+#   yourwife emotions           — емоції й анімації поточної моделі
+#   yourwife expr НАЗВА         — показати емоцію (напр. Happy)
+#   yourwife motion ГРУПА [N]   — програти анімацію
+#   yourwife fps 30|60          — ліміт кадрів (30 = удвічі менше навантаження на процесор)
+#   yourwife start | stop | restart | status
+D="$HOME/.local/share/Steam/steamapps/compatdata/3339420/pfx/drive_c/users/steamuser/AppData/Roaming/Godot/app_userdata/你的老婆"
+FILES=("$D/settings.cfg" "$D"/cloud/*/preferences.cfg)
+
+running() { pgrep -f 'YourWife[R]untime.exe' >/dev/null; }
+stop()  { pkill -f 'YourWife[R]untime.exe'; pkill -f 'YourWif[e].exe'; sleep 4; }
+# гра йде на окремому X-сервері :2 — у Steam в параметрах запуску: DISPLAY=:2 %command%
+start() { [ -e /tmp/.X11-unix/X2 ] || { setsid xwayland-satellite :2 >/dev/null 2>&1 & sleep 2; }
+          setsid steam steam://rungameid/3339420 >/dev/null 2>&1 & }
+set_key() { sed -i "s|^$1=.*|$1=$2|" "${FILES[@]}"; }
+
+# надіслати команду живій грі й показати відповідь (якщо є)
+send() {
+    rm -f "$D/linux_out.txt"
+    printf '%s\n' "$*" >> "$D/linux_cmd.txt"
+    for _ in $(seq 40); do
+        [ -s "$D/linux_out.txt" ] && { cat "$D/linux_out.txt"; return 0; }
+        sleep 0.1
+    done
+}
+
+char_id() {
+    if [[ "$1" =~ ^[1-8]$ ]]; then echo "character_0$1"; return; fi
+    python3 - "$D/workshop_subscriptions.json" "$1" <<'PY'
+import json, sys
+q = sys.argv[2].lower().removeprefix("workshop_")
+for it in json.load(open(sys.argv[1])):
+    if q == str(it["file_id"]) or q in it["name"].lower():
+        print(it["id"]); break
+PY
+}
+
+need_game() { running || { echo "гра не запущена (yourwife start)"; exit 1; }; }
+
+case "$1" in
+  list)  cur=$(sed -n 's/^character="\(.*\)"/\1/p' "$D/settings.cfg")
+         for i in 1 2 3 4 5 6 7 8; do id=character_0$i; m=" "; [ "$id" = "$cur" ] && m="*"; echo "$m $i  $id"; done
+         python3 - "$D/workshop_subscriptions.json" "$cur" <<'PY'
+import json, sys
+try: items = json.load(open(sys.argv[1]))
+except Exception: items = []
+for it in items:
+    m = "*" if it["id"] == sys.argv[2] else " "
+    print(f'{m} {it["file_id"]}  {it["name"]}  (Майстерня)')
+PY
+         ;;
+  char)  [ -n "$2" ] || { echo "вкажи номер 1..8, ID з Майстерні або назву (див. yourwife list)"; exit 1; }
+         id=$(char_id "$2")
+         [ -n "$id" ] || { echo "не знайдено: $2 (див. yourwife list)"; exit 1; }
+         if running; then send char "$id"; else set_key character "\"$id\""; echo "героїня: $id (застосується при запуску)"; fi ;;
+  size)  [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "розмір: число, напр. 0.8"; exit 1; }
+         if running; then send size "$2"; else set_key scale "$2"; echo "розмір: $2 (застосується при запуску)"; fi ;;
+  top)   v=$([ "$2" = off ] && echo off || echo on)
+         if running; then send top "$v"; else set_key always_on_top "$([ $v = off ] && echo false || echo true)"; fi ;;
+  lock)  need_game; send lock "$([ "$2" = off ] && echo off || echo on)" ;;
+  reset) need_game; send reset ;;
+  menu|settings|workshop|help) need_game; send "$1" ;;
+  emotions) need_game; send list-expr ;;
+  expr)  need_game; send expr "${*:2}" ;;
+  motion) need_game; send motion "${*:2}" ;;
+  fps)   [[ "$2" =~ ^[0-9]+$ ]] || { echo "fps: число, напр. 30"; exit 1; }
+         O="$HOME/.local/share/Steam/steamapps/common/YourWife/override.cfg"
+         sed -i '/^run\/max_fps=/d; /^\[application\]/d' "$O"; printf '\n[application]\n\nrun/max_fps=%s\n' "$2" >> "$O"
+         sed -i '/^$/N;/^\n$/D' "$O"
+         if running; then send maxfps "$2"; else echo "ліміт FPS $2 (застосується при запуску)"; fi ;;
+  start) start ;;
+  stop)  stop ;;
+  restart) stop; start ;;
+  status|"") grep -h -E '^(character|scale|always_on_top|language)=' "$D/settings.cfg"; running && echo "гра запущена" || echo "гра закрита" ;;
+  *) sed -n '4,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

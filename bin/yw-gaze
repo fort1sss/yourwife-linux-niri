@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+# Your Wife: героїня дивиться на курсор по всьому екрану, а не лише над своїм вікном.
+# На Wayland гра (через XWayland) не бачить курсор поза своїм вікном і думає, що стоїть у (0,0).
+# Тому ~30 разів на секунду беремо позицію курсора з niri (niri msg cursor-position — є лише
+# в нашій збірці niri-shaders) і шлемо у вікно гри X-подію «миша рухається» з координатами
+# курсора відносно вікна героїні — Wine оновлює з неї GetCursorPos, і гра бачить курсор.
+# Події шлемо лише у вікно гри, тож іншим програмам (Steam тощо) це не заважає.
+import ctypes as C, ctypes.util, json, os, socket, subprocess, time
+
+APP = "steam_app_3339420"
+HZ = 30
+GAME_DISPLAY = b":2"   # окремий X-сервер лише для гри (xwayland-satellite :2), щоб Steam не перехоплював наведення
+SIZE_FILE = os.path.expanduser("~/.local/share/Steam/steamapps/compatdata/3339420/pfx/drive_c/users/"
+                               "steamuser/AppData/Roaming/Godot/app_userdata/你的老婆/linux_winsize.txt")
+HEAD = 0.18      # де голова героїні по висоті вікна (частка від верху)
+
+X = C.cdll.LoadLibrary(ctypes.util.find_library("X11"))
+T = C.cdll.LoadLibrary(ctypes.util.find_library("Xtst"))
+X.XOpenDisplay.restype = C.c_void_p
+# Xlib за замовчуванням завершує ВЕСЬ процес на помилці X (напр. BadWindow, коли гра перезапустилась
+# і її вікно зникло). Ставимо свій обробник, який помилки просто ігнорує.
+_XERR = C.CFUNCTYPE(C.c_int, C.c_void_p, C.c_void_p)(lambda d, e: 0)
+X.XSetErrorHandler(_XERR)
+
+
+def niri(req):
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(os.environ["NIRI_SOCKET"])
+    s.sendall((json.dumps(req) + "\n").encode())
+    data = b""
+    while not data.endswith(b"\n"):
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+    s.close()
+    return json.loads(data)["Ok"]
+
+
+def rect(w):
+    L = w["layout"]
+    pos = L.get("tile_pos_in_workspace_view")
+    if pos is None:
+        return None
+    off = L.get("window_offset_in_tile", [0, 0])
+    x, y = pos[0] + off[0], pos[1] + off[1]
+    return x, y, L["window_size"][0], L["window_size"][1]
+
+
+def inside(r, px, py):
+    return r and r[0] <= px < r[0] + r[2] and r[1] <= py < r[1] + r[3]
+
+
+def niri_action(*args):
+    req = {"Action": {args[0]: args[1]}}
+    try:
+        niri(req)
+    except Exception:
+        pass
+
+
+_game_for_size = None   # останнє відоме вікно гри (оновлює головний цикл)
+
+
+ACTUAL_FILE = os.path.join(os.path.dirname(SIZE_FILE), "linux_actual.txt")
+
+
+def write_actual(w, h):
+    """Справжній розмір вікна в niri — для linux_key.gd: поки вікно ще не доросло до бажаного,
+    гра малює героїню в розмірі, що влазить у справжнє вікно (без обрізання)."""
+    try:
+        with open(ACTUAL_FILE + ".tmp", "w") as f:
+            f.write(f"{w} {h}\n")
+        os.replace(ACTUAL_FILE + ".tmp", ACTUAL_FILE)
+    except OSError:
+        pass
+
+
+def apply_size():
+    """Гра хоче інший розмір вікна (колесо миші / yourwife size), а xwayland-satellite його не дає —
+    ставимо розмір через niri одним з'єднанням (ширина, висота й зсув разом). Вікно росте «від ніг»,
+    як на Windows: низ по центру лишається на місці."""
+    game = _game_for_size
+    if not game:
+        return
+    try:
+        w, h = map(int, open(SIZE_FILE).read().split()[:2])
+    except (OSError, ValueError):
+        return
+    if w <= 0 or h <= 0:
+        return
+    try:
+        cur = next((x for x in niri("Windows")["Windows"] if x["id"] == game["id"]), None)
+    except Exception:
+        cur = None
+    if not cur:
+        return
+    cw, ch = cur["layout"]["window_size"]
+    if (cw, ch) == (w, h):
+        write_actual(w, h)
+        return
+    dx, dy = -(w - cw) / 2, -(h - ch)
+    # не виїжджати за екран: якщо зверху/збоку немає місця — зсуваємо назад у межі (голова видна)
+    pos = cur["layout"].get("tile_pos_in_workspace_view")
+    if pos:
+        try:
+            out = next(iter(niri("Outputs")["Outputs"].values()))["logical"]
+            sw, sh = out["width"], out["height"]
+        except Exception:
+            sw, sh = 1920, 1080
+        nx, ny = pos[0] + dx, pos[1] + dy
+        nx = min(max(nx, 0), max(sw - w, 0))
+        ny = min(max(ny, 0), max(sh - h, 0))
+        dx, dy = nx - pos[0], ny - pos[1]
+    reqs = [{"Action": {"SetWindowWidth": {"id": game["id"], "change": {"SetFixed": w}}}},
+            {"Action": {"SetWindowHeight": {"id": game["id"], "change": {"SetFixed": h}}}}]
+    if cur.get("is_floating"):
+        reqs.append({"Action": {"MoveFloatingWindow": {"id": game["id"],
+                     "x": {"AdjustFixed": dx}, "y": {"AdjustFixed": dy}}}})
+    s = socket.socket(socket.AF_UNIX)
+    try:
+        s.connect(os.environ["NIRI_SOCKET"])
+        s.sendall(("\n".join(json.dumps(r) for r in reqs) + "\n").encode())
+        s.settimeout(0.5)
+        got = b""
+        try:
+            while got.count(b"\n") < len(reqs):
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                got += chunk
+        except OSError:
+            pass
+    finally:
+        s.close()
+    # niri застосовує розмір, коли клієнт (X-вікно) підтвердить; даємо кадр і повідомляємо грі
+    for _ in range(10):
+        time.sleep(0.008)
+        try:
+            cur = next((x for x in niri("Windows")["Windows"] if x["id"] == game["id"]), None)
+        except Exception:
+            cur = None
+        if cur and tuple(cur["layout"]["window_size"]) == (w, h):
+            break
+    if cur:
+        write_actual(*cur["layout"]["window_size"])
+
+
+def size_watcher():
+    """Окремий потік: inotify на теку гри — реагуємо на запис linux_winsize.txt одразу."""
+    import threading
+    libc = C.CDLL(None, use_errno=True)
+    fd = libc.inotify_init1(0)
+    libc.inotify_add_watch(fd, os.path.dirname(SIZE_FILE).encode(), 0x00000008 | 0x00000080)
+    name = os.path.basename(SIZE_FILE).encode()
+
+    def loop():
+        while True:
+            buf = os.read(fd, 4096)
+            if name in buf:
+                apply_size()
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def fit(x, y, w, h, sw, sh):
+    """Для гри її вікно стоїть у (0,0), а курсор не може вийти за межі екрана (0..sw, 0..sh).
+    Точку поза цими межами зсуваємо до краю вздовж променя від голови — напрям погляду точний."""
+    ax, ay = w / 2, h * HEAD
+    w, h = sw, sh
+    vx, vy = x - ax, y - ay
+    t = 1.0
+    if vx < 0: t = min(t, (0 - ax) / vx)
+    if vx > 0: t = min(t, (w - 1 - ax) / vx)
+    if vy < 0: t = min(t, (0 - ay) / vy)
+    if vy > 0: t = min(t, (h - 1 - ay) / vy)
+    return int(ax + vx * t), int(ay + vy * t)
+
+
+def x_children(d):
+    root = X.XDefaultRootWindow(C.c_void_p(d))
+    r, p, ch, n = C.c_ulong(), C.c_ulong(), C.POINTER(C.c_ulong)(), C.c_uint()
+    X.XQueryTree(C.c_void_p(d), C.c_ulong(root), C.byref(r), C.byref(p), C.byref(ch), C.byref(n))
+    return [ch[i] for i in range(n.value)]
+
+
+def x_size(d, w):
+    r, x, y, wd, h, b, dp = C.c_ulong(), C.c_int(), C.c_int(), C.c_uint(), C.c_uint(), C.c_uint(), C.c_uint()
+    X.XGetGeometry(C.c_void_p(d), C.c_ulong(w), C.byref(r), C.byref(x), C.byref(y), C.byref(wd), C.byref(h), C.byref(b), C.byref(dp))
+    return wd.value, h.value
+
+
+def x_game_window(d, w, h):
+    """X-вікно гри: верхнє вікно того ж розміру, що й вікно героїні в niri."""
+    for xw in x_children(d):
+        if x_size(d, xw) == (w, h):
+            return xw
+    return None
+
+
+def clear_background(d, win):
+    """Фон X-вікна гри (і його дочірніх) — прозорий (піксель 0 у 32-бітному вікні). Інакше при
+    збільшенні вікна нова ділянка на мить заливається чорним, доки гра її не перемалює."""
+    attrs = (C.c_byte * 120)()                                   # XSetWindowAttributes
+    C.c_ulong.from_address(C.addressof(attrs) + 8).value = 0     # background_pixel = 0
+    todo = [win]
+    while todo:
+        w = todo.pop()
+        X.XChangeWindowAttributes(C.c_void_p(d), C.c_ulong(w), C.c_ulong(1 << 1), attrs)  # CWBackPixel
+        r, p, ch, n = C.c_ulong(), C.c_ulong(), C.POINTER(C.c_ulong)(), C.c_uint()
+        if X.XQueryTree(C.c_void_p(d), C.c_ulong(w), C.byref(r), C.byref(p), C.byref(ch), C.byref(n)):
+            todo += [ch[i] for i in range(n.value)]
+    X.XFlush(C.c_void_p(d))
+
+
+def send_motion(d, win, x, y):
+    ev = (C.c_byte * 192)()
+    b = C.addressof(ev)
+    C.c_int.from_address(b + 0).value = 6                      # MotionNotify
+    C.c_int.from_address(b + 16).value = 1                     # send_event
+    C.c_void_p.from_address(b + 24).value = d
+    C.c_ulong.from_address(b + 32).value = win
+    C.c_ulong.from_address(b + 40).value = X.XDefaultRootWindow(C.c_void_p(d))
+    for off, v in ((64, x), (68, y), (72, x), (76, y)):
+        C.c_int.from_address(b + off).value = v
+    C.c_int.from_address(b + 88).value = 1                     # same_screen
+    X.XSendEvent(C.c_void_p(d), C.c_ulong(win), 1, C.c_long(1 << 6), ev)
+    X.XFlush(C.c_void_p(d))
+
+
+def main():
+    d = X.XOpenDisplay(GAME_DISPLAY)
+    if not d:
+        raise RuntimeError("no X display")
+    X.XDefaultRootWindow.restype = C.c_ulong
+    sw = X.XDisplayWidth(C.c_void_p(d), 0) or 1920
+    sh = X.XDisplayHeight(C.c_void_p(d), 0) or 1080
+    xwin, xwin_size, was_over = None, None, None
+    global _game_for_size
+    size_watcher()
+    game, others, last_scan, last = None, [], 0.0, None
+    while True:
+        now = time.monotonic()
+        if now - last_scan > 0.5:
+            last_scan = now
+            wins = niri("Windows")["Windows"]
+            ws = {w["id"]: w for w in niri("Workspaces")["Workspaces"]}
+            active = {i for i, w in ws.items() if w["is_active"]}
+            game = next((w for w in wins if w["app_id"] == APP and w["title"]
+                         and w["workspace_id"] in active), None)
+            xpid = game["pid"] if game else None
+            others = [rect(w) for w in wins if xpid and w["pid"] == xpid and w["app_id"] != APP
+                      and w["workspace_id"] in active]
+        if not game:
+            time.sleep(1)
+            continue
+        _game_for_size = game
+        cx, cy = niri("CursorPosition")["CursorPosition"]
+        g = rect(game)
+        if g and (xwin is None or xwin_size != (g[2], g[3])):
+            xwin, xwin_size = x_game_window(d, g[2], g[3]), (g[2], g[3])
+            if xwin:
+                clear_background(d, xwin)
+        if not xwin:
+            time.sleep(0.5)
+            continue
+        # Під XWayland усі X-вікна стоять у (0,0) одне на одному, і X сам вирішує, кому дістанеться
+        # наведення, за своїм порядком вікон. Тому, коли курсор заходить на X-вікно в niri (героїня,
+        # Steam...), піднімаємо саме його наверх X-стосу — інакше наведення на героїню відкривало меню Steam.
+        hov = None
+        if g and inside(g, cx, cy):
+            hov = ("game", g[2], g[3])
+        else:
+            r = next((r for r in others if inside(r, cx, cy)), None)
+            if r:
+                hov = ("other", r[2], r[3])
+        if hov and hov != was_over:
+            target = xwin if hov[0] == "game" else x_game_window(d, hov[1], hov[2])
+            if target:
+                X.XRaiseWindow(C.c_void_p(d), C.c_ulong(target))
+                X.XFlush(C.c_void_p(d))
+        was_over = hov
+        if g:
+            p = fit(cx - g[0], cy - g[1], g[2], g[3], sw, sh)
+            if p != last:
+                send_motion(d, xwin, p[0], p[1])
+                last = p
+        time.sleep(1 / HZ)
+
+
+if __name__ == "__main__":
+    while True:
+        try:
+            main()
+        except Exception:
+            time.sleep(3)
