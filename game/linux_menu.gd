@@ -137,6 +137,12 @@ func _fill(box: VBoxContainer, menu: PopupMenu, is_main: bool) -> void:
 		b.disabled = menu.is_item_disabled(i)
 		_style_button(b, sub != null)
 		if is_main:
+			# підсвітку в головному меню ведемо самі — завжди рівно один пункт
+			b.add_theme_stylebox_override("hover", lk.menu_box("row"))
+			b.add_theme_stylebox_override("pressed", lk.menu_box("row"))
+			b.add_theme_stylebox_override("hover_pressed", lk.menu_box("row"))
+			b.add_theme_color_override("font_hover_color", lk.menu_color("text"))
+			b.add_theme_color_override("font_pressed_color", lk.menu_color("text"))
 			b.mouse_entered.connect(_on_main_hover.bind(i))
 		if sub:
 			var arrow := Label.new()
@@ -153,6 +159,7 @@ func _fill(box: VBoxContainer, menu: PopupMenu, is_main: bool) -> void:
 		box.add_child(b)
 
 func _on_main_hover(i: int) -> void:
+	_highlight_main(i)
 	if i == _sub_for:
 		return
 	var sub := _source.get_item_submenu_node(i)
@@ -163,6 +170,12 @@ func _on_main_hover(i: int) -> void:
 			_resize()
 		return
 	_sub_for = i
+	if str(sub.name).begins_with("Linux_size"):
+		_fill_size_slider()
+		_sub_panel.visible = true
+		_sub_scroll.scroll_vertical = 0
+		_resize()
+		return
 	# підменю живе: перед показом гра/наш скрипт можуть оновити галочки — повідомляємо, як рідному меню
 	sub.about_to_popup.emit()
 	_fill(_sub_box, sub, false)
@@ -170,6 +183,89 @@ func _on_main_hover(i: int) -> void:
 	_sub_scroll.scroll_vertical = 0
 	_resize()
 	_highlight_main(i)
+
+# «Розмір»: повзунок 55-450% з кроком 1%, героїня змінюється, поки тягнеш (з невеликою паузою,
+# щоб не смикати вікно на кожен піксель)
+var _size_label: Label
+var _size_pending := -1.0
+func _fill_size_slider() -> void:
+	_clear(_sub_box)
+	var pct: int = int(round(float(lk._pet()._character_scale) * 100.0))
+	_size_label = Label.new()
+	_size_label.text = "%s: %d%%" % [lk._t("Розмір", "Size"), pct]
+	_size_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_size_label.add_theme_font_override("font", lk._noto_font(400))
+	_size_label.add_theme_font_size_override("font_size", FONT_SIZE)
+	_size_label.add_theme_color_override("font_color", lk.menu_color("text"))
+	_size_label.custom_minimum_size.y = ROW_H
+	_sub_box.add_child(_size_label)
+	var sl := HSlider.new()
+	sl.min_value = 55
+	sl.max_value = 450
+	sl.step = 1
+	sl.value = pct
+	sl.custom_minimum_size = Vector2(SUB_W - 50, 34)
+	sl.focus_mode = Control.FOCUS_NONE
+	var grab: Color = lk.menu_color("hover_text")
+	var track := StyleBoxFlat.new()
+	track.bg_color = lk.menu_color("line")
+	track.set_corner_radius_all(4)
+	track.content_margin_top = 3; track.content_margin_bottom = 3
+	var fill: StyleBoxFlat = track.duplicate()
+	fill.bg_color = grab
+	sl.add_theme_stylebox_override("slider", track)
+	sl.add_theme_stylebox_override("grabber_area", fill)
+	sl.add_theme_stylebox_override("grabber_area_highlight", fill)
+	var knob := _circle(18, grab)
+	sl.add_theme_icon_override("grabber", knob)
+	sl.add_theme_icon_override("grabber_highlight", _circle(20, grab.lightened(0.15)))
+	sl.value_changed.connect(_on_size_slider)
+	_sub_box.add_child(sl)
+	var hint := Label.new()
+	hint.text = "55%                                        450%"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_override("font", lk._noto_font(400))
+	hint.add_theme_font_size_override("font_size", FONT_SIZE - 5)
+	hint.add_theme_color_override("font_color", lk.menu_color("dim"))
+	_sub_box.add_child(hint)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	for v in [75, 100, 150, 200]:
+		var b := Button.new()
+		b.text = "%d%%" % v
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(80, ROW_H)
+		_style_button(b, false)
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.pressed.connect(func(): sl.value = v)
+		row.add_child(b)
+	_sub_box.add_child(row)
+
+func _circle(d: int, c: Color) -> Texture2D:
+	var img := Image.create(d, d, false, Image.FORMAT_RGBA8)
+	var r := d / 2.0
+	for y in d:
+		for x in d:
+			var dist := Vector2(x + 0.5 - r, y + 0.5 - r).length()
+			var a := clampf(r - dist, 0.0, 1.0)
+			img.set_pixel(x, y, Color(c.r, c.g, c.b, a))
+	return ImageTexture.create_from_image(img)
+
+func _on_size_slider(v: float) -> void:
+	if _size_label:
+		_size_label.text = "%s: %d%%" % [lk._t("Розмір", "Size"), int(v)]
+	var first := _size_pending < 0
+	_size_pending = v / 100.0
+	if first:
+		get_tree().create_timer(0.12).timeout.connect(_apply_size_pending)
+
+func _apply_size_pending() -> void:
+	if _size_pending < 0:
+		return
+	var pet = lk._pet()
+	pet._resize_character(clampf(_size_pending, 0.55, 4.5))
+	pet._save_preferences()
+	_size_pending = -1.0
 
 func _highlight_main(i: int) -> void:
 	# рядки головного меню відповідають пунктам 1:1 (роздільник = HSeparator/Label)

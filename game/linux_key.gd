@@ -248,6 +248,10 @@ func _run(line: String) -> void:
 			for m in [pet._context_menu, pet._tray_menu]:
 				o += "%s visible=%s pos=%s DS=%s\n" % [m.name, m.visible, m.position, (DisplayServer.window_get_position(m.get_window_id()) if m.visible else Vector2i(-1, -1))]
 			_say(o)
+		"menuhover":
+			if _menu_win and _menu_win.visible:
+				_menu_win._on_main_hover(arg.to_int())
+			_say("ok menuhover")
 		"closemenu":
 			if _menu_win:
 				_menu_win.close()
