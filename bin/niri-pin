@@ -13,7 +13,14 @@ def niri_json(*args):
     return json.loads(subprocess.run(["niri", "msg", "-j", *args], capture_output=True, text=True).stdout)
 
 
+LOCK_FILE = os.path.expanduser("~/.local/share/Steam/steamapps/compatdata/3339420/pfx/drive_c/users/"
+                               "steamuser/AppData/Roaming/Godot/app_userdata/你的老婆/linux_lock")
+
+
 def sync():
+    # героїню «заблоковано» (меню / подвійний клік) — лишається на своєму робочому столі
+    if os.path.exists(LOCK_FILE):
+        return
     ws = niri_json("workspaces")
     cur = next((w for w in ws if w["is_focused"]), None)
     if not cur:

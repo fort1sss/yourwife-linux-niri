@@ -821,7 +821,7 @@ func fade_switch(cb: Callable) -> void:
 	cb.call()
 	await get_tree().process_frame
 	var tw2 := create_tween()
-	tw2.tween_property(pet, "modulate:a", 0.85 if _locked else 1.0, 0.25)
+	tw2.tween_property(pet, "modulate:a", 1.0, 0.25)
 
 func toggle_hide() -> void:
 	var pet := _pet()
@@ -832,8 +832,9 @@ func toggle_hide() -> void:
 		pet._on_menu_item_pressed(10)   # логіка гри «Приховати персонажа»
 	pet._save_preferences()
 
-# Блокування на Linux: справжній «клік крізь вікно» під XWayland не працює, тож заблокована героїня
-# просто не реагує на мишку (перетягування, колесо, правий клік); подвійний клік її розблоковує.
+# Блокування на Linux: героїня лишається на поточному робочому столі niri (niri-pin перестає
+# переносити її за тобою). Стан — файл user://linux_lock, його перевіряє niri-pin. Перемикач —
+# пункт меню або подвійний клік по героїні.
 func toggle_lock() -> void:
 	_locked = not _locked
 	if _locked:
@@ -852,9 +853,9 @@ func _apply_lock() -> void:
 	var pet := _pet()
 	if pet == null:
 		return
-	pet.set_process_input(not _locked)
-	pet.set_process_unhandled_input(not _locked)
-	pet.modulate.a = 0.85 if _locked else 1.0
+	pet.set_process_input(true)
+	pet.set_process_unhandled_input(true)
+	pet.modulate.a = 1.0
 
 var _last_click_ms := 0
 var _last_click_pos := Vector2(-999, -999)
