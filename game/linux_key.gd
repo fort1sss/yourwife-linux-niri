@@ -94,6 +94,7 @@ func _process(delta: float) -> void:
 	_last_tick = now
 	_report_size()
 	_guard_scale()
+	_watch_model_expr(delta)
 	_fit_to_actual()
 	_hold_expression()
 	_poll += delta
@@ -246,6 +247,7 @@ func expr_groups() -> Array:
 	_rebuild_expr()
 	_load_expr_params(files)
 	_load_param_names()
+	_restore_expr(files)
 	var names := files.keys()
 	names.sort()
 	var by_cat := {}
@@ -261,6 +263,50 @@ func expr_groups() -> Array:
 		var nm: String = _t("Інше", "Other") if ci < 0 else _t(CATS[ci][0], CATS[ci][1])
 		_groups.append({"name": nm, "items": by_cat[ci]})
 	return _groups
+
+# ввімкнені емоції зберігаються окремо для кожного персонажа (user://linux_expr.json)
+const EXPR_FILE := "user://linux_expr.json"
+func _char_id() -> String:
+	var pet := _pet()
+	return str(pet.get("_selected_character_id")) if pet else ""
+
+func _save_expr() -> void:
+	var cid := _char_id()
+	if cid == "":
+		return
+	var d = JSON.parse_string(FileAccess.get_file_as_string(EXPR_FILE)) if FileAccess.file_exists(EXPR_FILE) else {}
+	if typeof(d) != TYPE_DICTIONARY:
+		d = {}
+	if _active.is_empty():
+		d.erase(cid)
+	else:
+		d[cid] = _active.duplicate()
+	var f := FileAccess.open(EXPR_FILE, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(d))
+		f.close()
+
+func _restore_expr(files: Dictionary) -> void:
+	if not FileAccess.file_exists(EXPR_FILE):
+		return
+	var d = JSON.parse_string(FileAccess.get_file_as_string(EXPR_FILE))
+	if typeof(d) != TYPE_DICTIONARY:
+		return
+	for n in d.get(_char_id(), []):
+		if files.has(n) and not (n in _active):
+			_active.append(n)
+	_rebuild_expr()
+
+# після запуску й після зміни персонажа — підхопити збережені емоції (модель вантажиться не одразу)
+var _expr_watch := 0.0
+func _watch_model_expr(delta: float) -> void:
+	_expr_watch += delta
+	if _expr_watch < 0.5:
+		return
+	_expr_watch = 0.0
+	var m := _model()
+	if m and not _groups_key.begins_with(str(m.get("assets")) + "|"):
+		expr_groups()
 
 func is_expr_active(name: String) -> bool:
 	return name in _active
@@ -281,6 +327,7 @@ func _set_expression(name: String) -> String:
 	if name == "" or name == "off" or name == "none":
 		_active.clear()
 		_rebuild_expr()
+		_save_expr()
 		return "ok expr off"
 	var key := ""
 	for g in groups:
@@ -299,6 +346,7 @@ func _set_expression(name: String) -> String:
 	else:
 		_active.append(key)
 	_rebuild_expr()
+	_save_expr()
 	return "ok expr " + (_expr_name if _expr_name != "" else "off")
 
 func _hold_expression() -> void:
@@ -441,6 +489,74 @@ func _run(line: String) -> void:
 				for c in _menu_win._main_box.get_children().slice(0, 3):
 					o += "  main %s pos=%s size=%s\n" % [c.get_class(), c.position, c.size]
 			_say(o)
+		"wsbench":
+			_spikes.clear()
+			var t0 := Time.get_ticks_usec()
+			pet._show_workshop()
+			var ms := (Time.get_ticks_usec() - t0) / 1000
+			await get_tree().create_timer(4.0).timeout
+			var fonts := {}
+			for w in _themed_windows():
+				if w.visible:
+					for c in _all_controls(w):
+						var f = c.get_theme_font("font")
+						if f:
+							var k: String = f.get_class() + (" " + str(f.font_names) if f is SystemFont else "")
+							fonts[k] = fonts.get(k, 0) + 1
+			_say("show_workshop %d ms\nspikes after: %s\nfonts: %s" % [ms, ", ".join(PackedStringArray(_spikes)), str(fonts)])
+		"wsitems":
+			var svc = get_tree().root.get_node_or_null("DesktopPet/@Node@2")
+			var o := ""
+			if svc:
+				for cat in ["browse", "subscribed"]:
+					var items = svc.get_items(cat)
+					o += "%s: %d items\n" % [cat, items.size()]
+					if items.size() > 0:
+						var it = items[0]
+						for k in it:
+							o += "  %s = %s\n" % [k, str(it[k]).left(110)]
+				for pp in svc.get_script().get_script_property_list():
+					if pp.usage & PROPERTY_USAGE_SCRIPT_VARIABLE:
+						o += "v " + pp.name + " = " + str(svc.get(pp.name)).left(90) + "\n"
+			_say(o)
+		"wssignals":
+			var svc = get_tree().root.get_node_or_null("DesktopPet/@Node@2")
+			var o := ""
+			for sg in svc.get_signal_list():
+				var cons = svc.get_signal_connection_list(sg.name)
+				if cons.size() > 0:
+					var names := []
+					for c in cons:
+						names.append(str(c.callable.get_object()) + "::" + str(c.callable.get_method()))
+					o += sg.name + " -> " + ", ".join(PackedStringArray(names)) + "\n"
+			_say(o)
+		"wsprobe":
+			var w = get_tree().root.get_node_or_null("DesktopPet/@Window@153")
+			var o := ""
+			var keys = w.get("_preview_cache").keys()
+			o += "cache %d, first: %s\n" % [keys.size(), str(keys[0]) if keys.size() > 0 else "-"]
+			o += "svc first url: %s\n" % str(_ws_service.get("_items")["browse"][0]["preview_url"]) if _ws_service else "no svc\n"
+			var t := Time.get_ticks_usec()
+			w._render_items()
+			o += "_render_items %d ms, cards=%d\n" % [(Time.get_ticks_usec() - t) / 1000, w.get("_grid").get_child_count()]
+			_say(o)
+		"wsrefresh":
+			_spikes.clear()
+			_restyle_ms = 0
+			var t := Time.get_ticks_usec()
+			_ws_service.refresh_all()
+			var a := (Time.get_ticks_usec() - t) / 1000
+			await get_tree().create_timer(5.0).timeout
+			_say("refresh_all %d ms; restyle total %d ms; spikes: %s" % [a, _restyle_ms, ", ".join(PackedStringArray(_spikes))])
+			_restyle_ms = 0
+		"wsnorender":
+			# те саме, але вікно Майстерні сховане (чи гальмує сама служба Steam)
+			var w = get_tree().root.get_node_or_null("DesktopPet/@Window@153")
+			w.hide()
+			_spikes.clear()
+			_ws_service.refresh_all()
+			await get_tree().create_timer(5.0).timeout
+			_say("hidden window; spikes: %s" % ", ".join(PackedStringArray(_spikes)))
 		"closemenu":
 			if _menu_win:
 				_menu_win.close()
@@ -905,6 +1021,11 @@ func _linux_ui_setup() -> void:
 	t.toggled.connect(_on_linux_autostart)
 	pet._settings_window.visibility_changed.connect(_patch_settings)
 	_hook_themed_windows.call_deferred()
+	_hook_workshop_previews.call_deferred()
+	_fix_font(ThemeDB.fallback_font)
+	var pt := ThemeDB.get_project_theme()
+	if pt:
+		_fix_font(pt.default_font)
 	get_tree().node_added.connect(_on_node_added_theme)
 	_load_keys()
 	_locked = FileAccess.file_exists("user://linux_lock")
@@ -1349,13 +1470,19 @@ func _set_fps(fps: int) -> void:
 	# зберегти в override.cfg поруч із грою (на наступні запуски)
 	var path := OS.get_executable_path().get_base_dir().path_join("override.cfg")
 	var txt := FileAccess.get_file_as_string(path)
-	var lines := []
-	for l in txt.split("\n"):
-		if not l.begins_with("run/max_fps=") and l != "[application]":
-			lines.append(l)
-	while lines.size() > 0 and lines[-1] == "":
-		lines.pop_back()
-	lines.append_array(["", "[application]", "", "run/max_fps=%d" % fps, ""])
+	# лише замінити/додати run/max_fps у секції [application], решту (boot_splash тощо) не чіпати
+	var lines := Array(txt.split("\n"))
+	var done := false
+	for k in lines.size():
+		if str(lines[k]).begins_with("run/max_fps="):
+			lines[k] = "run/max_fps=%d" % fps
+			done = true
+	if not done:
+		var at := lines.find("[application]")
+		if at >= 0:
+			lines.insert(at + 2 if at + 1 < lines.size() and lines[at + 1] == "" else at + 1, "run/max_fps=%d" % fps)
+		else:
+			lines.append_array(["", "[application]", "", "run/max_fps=%d" % fps])
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f:
 		f.store_string("\n".join(lines))
@@ -1559,7 +1686,16 @@ func _scheme_colors() -> Dictionary:
 			return {"bg": Color("#050505"), "panel": Color("#111111"), "text": Color("#f2f2f2"), "dim": Color("#8a8a8a")}
 	return {}
 
+var _box_cache := {}
 func _box(c: Color, radius: int, border := Color(0, 0, 0, 0)) -> StyleBoxFlat:
+	var k := "%s|%d|%s" % [c.to_html(), radius, border.to_html()]
+	if _box_cache.has(k):
+		return _box_cache[k]
+	var sbx := _box_new(c, radius, border)
+	_box_cache[k] = sbx
+	return sbx
+
+func _box_new(c: Color, radius: int, border := Color(0, 0, 0, 0)) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = c
 	sb.set_corner_radius_all(radius)
@@ -1620,8 +1756,8 @@ func _style_settings(w: Window) -> void:
 	var sec: Color = PALETTE[_theme.second][2]
 	_style_controls(w, sc, acc, sec)
 
-func _style_controls(n: Node, sc: Dictionary, acc: Color, sec: Color) -> void:
-	for c in n.get_children():
+func _style_node(c: Node, sc: Dictionary, acc: Color, sec: Color) -> void:
+	if true:
 		if c is ColorRect:
 			if not c.has_meta("orig_color"):
 				c.set_meta("orig_color", c.color)
@@ -1693,6 +1829,10 @@ func _style_controls(n: Node, sc: Dictionary, acc: Color, sec: Color) -> void:
 				c.add_theme_stylebox_override("normal", _box(sc.panel.lightened(0.06), 10, acc.darkened(0.4)))
 				c.add_theme_stylebox_override("hover", _box(h, 10, acc))
 				c.add_theme_stylebox_override("pressed", _box(h, 10, acc))
+
+func _style_controls(n: Node, sc: Dictionary, acc: Color, sec: Color) -> void:
+	for c in n.get_children():
+		_style_node(c, sc, acc, sec)
 		_style_controls(c, sc, acc, sec)
 
 # вікна гри, що беруть тему меню: налаштування, довідка, Майстерня, завантаження, підтвердження
@@ -1722,11 +1862,13 @@ func _hook_themed_windows() -> void:
 
 # Майстерня довантажує картки поступово — перефарбовуємо нові елементи (не частіше раза на кадр)
 func _on_node_added_theme(n: Node) -> void:
-	if not (n is Control):
+	if not (n is Control) or FileAccess.file_exists("user://linux_notheme"):
 		return
 	var w: Window = n.get_window()
-	if w and _themed_hooked.has(w.get_instance_id()) and w.visible:
-		_queue_restyle(w)
+	if w and _themed_hooked.has(w.get_instance_id()):
+		_style_node(n, _scheme_colors(), PALETTE[_theme.accent][2], PALETTE[_theme.second][2])
+		if n is Control:
+			_fix_font(n.get_theme_font("font"))
 
 # розмір вікна, який хоче гра (Майстерня 1200x720 тощо), — у файл, yw-gaze виставляє його через niri
 func _report_later(w: Window) -> void:
@@ -1744,11 +1886,104 @@ func _queue_restyle(w: Window) -> void:
 	_restyle_pending[k] = true
 	_do_restyle.call_deferred(w)
 
+# Шрифти вікон гри (FontFile, напр. Open Sans) за замовчуванням шукають відсутні символи
+# (китайські/японські назви в Майстерні) серед системних шрифтів — під Wine це сотні мс на кадр.
+# Даємо їм запасний Noto (кирилиця + CJK) і забороняємо пошук через Wine.
+var _fixed_fonts := {}
+func _fix_font(f: Font) -> void:
+	if f == null or _fixed_fonts.has(f.get_instance_id()):
+		return
+	_fixed_fonts[f.get_instance_id()] = true
+	var base: Font = f
+	if f is FontVariation and f.base_font:
+		base = f.base_font
+	if base is FontFile and base != _noto_font(400):
+		var fb: Array = base.fallbacks
+		var noto := _noto_font(400)
+		if not (noto in fb):
+			fb.append(noto)
+			base.fallbacks = fb
+		base.allow_system_fallback = false
+
+func _fix_window_fonts(w: Window) -> void:
+	_fix_font(w.get_theme_font("font"))
+	for c in _all_controls(w):
+		_fix_font(c.get_theme_font("font"))
+
+# ───────────── Майстерня: маленькі прев'ю замість повнорозмірних ─────────────
+# Вікно Майстерні розпаковує кожне прев'ю в головному потоці; прев'ю Steam — сотні КБ, і гра
+# зависала на 0.2-1 с на кожній картці. Steam CDN віддає зменшену копію за параметрами адреси
+# (~18 КБ замість ~480 КБ) — підміняємо preview_url ДО того, як вікно побудує картки.
+const PREVIEW_Q := "?imw=360&imh=270&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false"
+var _ws_service: Node = null
+func _hook_workshop_previews() -> void:
+	var pet := _pet()
+	for c in pet.get_children():
+		if c.get_script() and str(c.get_script().resource_path).ends_with("workshop_service.gd"):
+			_ws_service = c
+	if _ws_service == null:
+		return
+	_shrink_previews()
+	# наш обробник — першим, решта (вікно Майстерні) — після нього
+	var cons: Array = _ws_service.get_signal_connection_list("items_changed")
+	for c in cons:
+		_ws_service.items_changed.disconnect(c.callable)
+	_ws_service.items_changed.connect(func(_a = null, _b = null): _shrink_previews())
+	# Steam шле дані сторінками, і вікно Майстерні після КОЖНОЇ заново будувало всі картки.
+	# Збираємо в одну перебудову (через 0.15 с тиші); якщо вікно сховане — до його відкриття.
+	for c in cons:
+		var obj = c.callable.get_object()
+		if obj is Window and str(c.callable.get_method()) == "_on_items_changed":
+			_ws_window = obj
+			_ws_render = c.callable
+			_ws_service.items_changed.connect(_on_ws_items_changed)
+			obj.visibility_changed.connect(func(): if obj.visible and _ws_dirty: _ws_flush())
+		else:
+			_ws_service.items_changed.connect(c.callable, c.flags)
+
+var _ws_window: Window = null
+var _ws_render: Callable
+var _ws_dirty := false
+var _ws_args := []
+var _ws_timer: SceneTreeTimer = null
+func _on_ws_items_changed(a = null, b = null) -> void:
+	_ws_args = [a, b]
+	_ws_dirty = true
+	if _ws_timer == null:
+		_ws_timer = get_tree().create_timer(0.15)
+		_ws_timer.timeout.connect(func(): _ws_timer = null; if _ws_window and _ws_window.visible: _ws_flush())
+	elif _ws_timer:
+		_ws_timer.time_left = 0.15
+
+func _ws_flush() -> void:
+	_ws_dirty = false
+	if _ws_render.is_valid():
+		_ws_render.callv(_ws_args if _ws_args.size() == 2 else [null, null])
+
+func _shrink_previews() -> void:
+	if _ws_service == null:
+		return
+	var all = _ws_service.get("_items")
+	if typeof(all) != TYPE_DICTIONARY:
+		return
+	for cat in all:
+		for it in all[cat]:
+			if typeof(it) == TYPE_DICTIONARY:
+				var u := str(it.get("preview_url", ""))
+				if u.begins_with("https://images.steamusercontent.com/") and not u.contains("?"):
+					it["preview_url"] = u + PREVIEW_Q
+				if FileAccess.file_exists("user://linux_nopreview"):
+					it["preview_url"] = ""
+
+var _restyle_ms := 0
 func _do_restyle(w: Window) -> void:
 	_restyle_pending.erase(w.get_instance_id())
+	var _t0 := Time.get_ticks_msec()
 	if is_instance_valid(w):
+		_fix_window_fonts(w)
 		_style_settings(w)
 		_style_tree_popups(w)
+	_restyle_ms += Time.get_ticks_msec() - _t0
 
 func _restyle_all() -> void:
 	var pet := _pet()

@@ -84,8 +84,9 @@ PY
   motion) need_game; send motion "${*:2}" ;;
   fps)   [[ "$2" =~ ^[0-9]+$ ]] || { echo "fps: число, напр. 30"; exit 1; }
          O="$HOME/.local/share/Steam/steamapps/common/YourWife/override.cfg"
-         sed -i '/^run\/max_fps=/d; /^\[application\]/d' "$O"; printf '\n[application]\n\nrun/max_fps=%s\n' "$2" >> "$O"
-         sed -i '/^$/N;/^\n$/D' "$O"
+         if grep -q '^run/max_fps=' "$O"; then sed -i "s|^run/max_fps=.*|run/max_fps=$2|" "$O"
+         elif grep -q '^\[application\]' "$O"; then sed -i "/^\[application\]/a run/max_fps=$2" "$O"
+         else printf '\n[application]\n\nrun/max_fps=%s\n' "$2" >> "$O"; fi
          if running; then send maxfps "$2"; else echo "ліміт FPS $2 (застосується при запуску)"; fi ;;
   start) start ;;
   stop)  stop ;;
