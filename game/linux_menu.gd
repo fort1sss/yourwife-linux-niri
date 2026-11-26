@@ -247,7 +247,8 @@ func _fill_size_slider() -> void:
 	_sub_box.add_child(_size_label)
 	var sl := HSlider.new()
 	sl.min_value = 55
-	sl.max_value = 450
+	sl.max_value = int(lk.max_safe_scale() * 100.0)
+	sl.scrollable = false          # колесо миші над повзунком не міняє розмір (при прокрутці меню він «стрибав»)
 	sl.step = 1
 	sl.value = pct
 	sl.custom_minimum_size = Vector2(SUB_W - 50, 34)
@@ -268,7 +269,7 @@ func _fill_size_slider() -> void:
 	sl.value_changed.connect(_on_size_slider)
 	_sub_box.add_child(sl)
 	var hint := Label.new()
-	hint.text = "55%                                        450%"
+	hint.text = "55%%                                        %d%%" % int(sl.max_value)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_font_override("font", lk._noto_font(400))
 	hint.add_theme_font_size_override("font_size", FONT_SIZE - 5)
@@ -276,7 +277,7 @@ func _fill_size_slider() -> void:
 	_sub_box.add_child(hint)
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	for v in [75, 100, 150, 200]:
+	for v in [75, 100, 150, 200].filter(func(x): return x <= sl.max_value):
 		var b := Button.new()
 		b.text = "%d%%" % v
 		b.focus_mode = Control.FOCUS_NONE
@@ -308,9 +309,7 @@ func _on_size_slider(v: float) -> void:
 func _apply_size_pending() -> void:
 	if _size_pending < 0:
 		return
-	var pet = lk._pet()
-	pet._resize_character(clampf(_size_pending, 0.55, 4.5))
-	pet._save_preferences()
+	lk.safe_resize(_size_pending)
 	_size_pending = -1.0
 
 func _highlight_main(i: int) -> void:

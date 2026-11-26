@@ -38,6 +38,20 @@ var _last_size := Vector2i.ZERO
 
 # xwayland-satellite не пускає зміну розміру вікна від самої гри (колесо миші, yourwife size),
 # тож повідомляємо бажаний розмір у файл — служба yw-gaze на боці niri виставляє його вікну.
+var _guard_ms := 0
+func _guard_scale() -> void:
+	var now := Time.get_ticks_msec()
+	if now - _guard_ms < 300:
+		return
+	_guard_ms = now
+	var pet := _pet()
+	if pet == null or pet.get("_character_scale") == null:
+		return
+	var lim := max_safe_scale()
+	if float(pet._character_scale) > lim + 0.01:
+		pet._resize_character(lim)
+		pet._save_preferences()
+
 func _report_size() -> void:
 	# позицією вікна на Linux керує niri; гра ж зсуває вікно при зміні розміру й за кілька змін
 	# «виїжджала» за екран і ховалась. Тримаємо її уявлення про позицію в (0,0), як і є для XWayland.
@@ -79,6 +93,7 @@ func _process(delta: float) -> void:
 			_spikes.pop_front()
 	_last_tick = now
 	_report_size()
+	_guard_scale()
 	_fit_to_actual()
 	_hold_expression()
 	_poll += delta
@@ -223,8 +238,7 @@ func _run(line: String) -> void:
 		"char":
 			_switch_character(pet, arg)
 		"size":
-			pet._resize_character(clampf(arg.to_float(), 0.55, 4.5))
-			pet._save_preferences()
+			safe_resize(arg.to_float())
 			_say("ok size " + arg)
 		"top":
 			pet._on_topmost_toggled(arg != "off")
@@ -823,6 +837,23 @@ func fade_switch(cb: Callable) -> void:
 	var tw2 := create_tween()
 	tw2.tween_property(pet, "modulate:a", 1.0, 0.25)
 
+# Найбільший безпечний розмір: вікно героїні не вище за 2 екрани. Більше гра виносить вікно за
+# екран і ховає його, а Vulkan під XWayland чекає видимого вікна — гра зависала.
+func max_safe_scale() -> float:
+	var pet := _pet()
+	var cur: float = max(float(pet._character_scale), 0.01)
+	var win := DisplayServer.window_get_size()
+	var base_h := float(win.y) / cur
+	var lim := 4.5
+	if base_h > 0:
+		lim = minf(4.5, (DisplayServer.screen_get_size().y * 2.0) / base_h)
+	return maxf(lim, 0.6)
+
+func safe_resize(s: float) -> void:
+	var pet := _pet()
+	pet._resize_character(clampf(s, 0.55, max_safe_scale()))
+	pet._save_preferences()
+
 func toggle_hide() -> void:
 	var pet := _pet()
 	if bool(pet._character_hidden):
@@ -1123,8 +1154,7 @@ func _on_size_pressed(id: int) -> void:
 		s *= 1.1
 	elif id == 101:
 		s /= 1.1
-	pet._resize_character(clampf(s, 0.55, 4.5))
-	pet._save_preferences()
+	safe_resize(s)
 
 func _fill_expr_menu() -> bool:
 	_expr_menu.clear()
