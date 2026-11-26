@@ -235,21 +235,28 @@ def main():
     sw = X.XDisplayWidth(C.c_void_p(d), 0) or 1920
     sh = X.XDisplayHeight(C.c_void_p(d), 0) or 1080
     xwin, xwin_size, was_over = None, None, None
+    menu_open = False
     global _game_for_size
     size_watcher()
     game, others, last_scan, last = None, [], 0.0, None
     while True:
         now = time.monotonic()
-        if now - last_scan > 0.5:
+        if now - last_scan > (0.1 if menu_open else 0.4):
             last_scan = now
             wins = niri("Windows")["Windows"]
             ws = {w["id"]: w for w in niri("Workspaces")["Workspaces"]}
             active = {i for i, w in ws.items() if w["is_active"]}
-            game = next((w for w in wins if w["app_id"] == APP and w["title"]
-                         and w["workspace_id"] in active), None)
+            # головне вікно гри — найстаріше вікно з назвою (налаштування/довідка відкриваються пізніше)
+            titled = sorted((w for w in wins if w["app_id"] == APP and w["title"]
+                             and w["workspace_id"] in active), key=lambda w: w["id"])
+            game = titled[0] if titled else None
             xpid = game["pid"] if game else None
-            others = [rect(w) for w in wins if xpid and w["pid"] == xpid and w["app_id"] != APP
+            # усі інші вікна того ж X-сервера, зокрема меню й налаштування самої гри: поки курсор над ними,
+            # не шлемо синтетичний рух — інакше Wine бачить дві позиції курсора і підсвітка в меню скаче
+            others = [rect(w) for w in wins if xpid and w["pid"] == xpid and w["id"] != game["id"]
                       and w["workspace_id"] in active]
+            menu_open = any(w["pid"] == xpid and w["app_id"] == APP and not w["title"]
+                            and tuple(w["layout"]["window_size"]) != (160, 20) for w in wins) if xpid else False
         if not game:
             time.sleep(1)
             continue
@@ -279,7 +286,8 @@ def main():
                 X.XRaiseWindow(C.c_void_p(d), C.c_ulong(target))
                 X.XFlush(C.c_void_p(d))
         was_over = hov
-        if g:
+        # меню гри відкрите або курсор над іншим вікном гри — не втручаємося в курсор Wine
+        if g and not menu_open and not (hov and hov[0] == "other"):
             p = fit(cx - g[0], cy - g[1], g[2], g[3], sw, sh)
             if p != last:
                 send_motion(d, xwin, p[0], p[1])
