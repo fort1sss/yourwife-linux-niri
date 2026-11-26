@@ -733,6 +733,44 @@ func _run(line: String) -> void:
 			svc.unsubscribe(fid)
 			await get_tree().create_timer(8.0).timeout
 			_say("item %d '%s'\nsubscribe -> subscribed=%s, spikes: %s\nunsubscribe -> subscribed=%s, spikes: %s" % [fid, title, subd, s1, svc.is_subscribed(fid), ", ".join(PackedStringArray(_spikes))])
+		"cardtest":
+			var w = get_tree().root.get_node_or_null("DesktopPet/@Window@153")
+			var grid = w.get("_grid")
+			var o := ""
+			var card: Node = null
+			var target_fid = 0
+			for c in grid.get_children():
+				var fid = c.get_meta("lk_fid", 0)
+				if not _ws_service.is_subscribed(int(fid)):
+					card = c
+					target_fid = fid
+					break
+			if card == null:
+				_say("no card")
+				return
+			var btns := []
+			for b in _all_controls(card):
+				if b is Button:
+					btns.append(b)
+					o += "button '%s' disabled=%s conns=%s\n" % [b.text, b.disabled, str(b.pressed.get_connections().map(func(x): return str(x.callable.get_method())))]
+			var act: Button = btns[-1] if btns.size() > 0 else null
+			o += "press '%s' on %s\n" % [act.text, str(target_fid)]
+			act.pressed.emit()
+			await get_tree().create_timer(6.0).timeout
+			o += "after: subscribed=%s\n" % str(_ws_service.is_subscribed(int(target_fid)))
+			# повторно знайти картку (могла замінитись) і натиснути ще раз
+			for c in grid.get_children():
+				if c.get_meta("lk_fid", 0) == target_fid:
+					var bb := []
+					for b in _all_controls(c):
+						if b is Button:
+							bb.append(b)
+					o += "card now: '%s'\n" % (bb[-1].text if bb.size() > 0 else "-")
+					if bb.size() > 0:
+						bb[-1].pressed.emit()
+			await get_tree().create_timer(6.0).timeout
+			o += "after 2nd press: subscribed=%s\n" % str(_ws_service.is_subscribed(int(target_fid)))
+			_say(o)
 		"closemenu":
 			if _menu_win:
 				_menu_win.close()

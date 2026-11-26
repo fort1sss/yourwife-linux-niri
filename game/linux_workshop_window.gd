@@ -14,9 +14,15 @@ var lk_stats := {"hit": 0, "miss": 0, "nopool": 0, "why": ""}
 func _lk_sig(item) -> String:
 	if typeof(item) != TYPE_DICTIONARY:
 		return ""
-	return "%s|%s|%s|%s|%s|%s|%s|%s|%s" % [item.get("file_id"), item.get("subscribed"), item.get("installed"),
+	# статус підписки гра тримає в службі Steam, а не в даних картки — тож беремо і його,
+	# і той самий текст кнопки, який рахує гра (оновлюється одразу після підписки/відписки)
+	var svc = get("_service")
+	var fid = item.get("file_id")
+	var subd = svc.is_subscribed(int(fid)) if svc and fid != null else false
+	var action := str(_card_action_text(item)) if has_method("_card_action_text") else ""
+	return "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" % [fid, item.get("subscribed"), item.get("installed"),
 		item.get("title"), item.get("preview_url"), item.get("votes_up"), item.get("content_type"),
-		item.get("animated"), _category]
+		item.get("animated"), _category, subd, action]
 
 func _render_items() -> void:
 	if not visible:
