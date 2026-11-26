@@ -158,6 +158,12 @@ func _fill(box: VBoxContainer, menu: PopupMenu, is_main: bool) -> void:
 			b.add_theme_color_override("font_hover_color", lk.menu_color("text"))
 			b.add_theme_color_override("font_pressed_color", lk.menu_color("text"))
 			b.mouse_entered.connect(_on_main_hover.bind(i))
+		else:
+			# підменю: підсвічуємо рядок самі — на всю ширину, щойно курсор у будь-якій його частині
+			b.mouse_entered.connect(_hl_row.bind(b, true))
+			b.mouse_exited.connect(_hl_row.bind(b, false))
+		b.mouse_filter = Control.MOUSE_FILTER_STOP
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if sub:
 			var arrow := Label.new()
 			arrow.text = "›"
@@ -191,6 +197,16 @@ func _open_nested(parent: PopupMenu, nested: PopupMenu) -> void:
 	_sub_box.move_child(back, 0)
 	_sub_scroll.scroll_vertical = 0
 	_resize()
+
+func _hl_row(b: Button, on: bool) -> void:
+	if not is_instance_valid(b) or b.disabled:
+		return
+	var box: StyleBox = lk.menu_box("hover") if on else lk.menu_box("row")
+	var col: Color = lk.menu_color("hover_text") if on else lk.menu_color("text")
+	for st in ["normal", "hover", "pressed", "hover_pressed"]:
+		b.add_theme_stylebox_override(st, box)
+	for fc in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+		b.add_theme_color_override(fc, col)
 
 func _on_main_hover(i: int) -> void:
 	_highlight_main(i)

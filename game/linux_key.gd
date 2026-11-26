@@ -301,6 +301,15 @@ func _run(line: String) -> void:
 					if sub:
 						todo.append(sub)
 			_say(o)
+		"menusizes":
+			var o := ""
+			if _menu_win:
+				o += "sub_scroll %s, sub_box %s\n" % [_menu_win._sub_scroll.size, _menu_win._sub_box.size]
+				for c in _menu_win._sub_box.get_children().slice(0, 4):
+					o += "  sub %s pos=%s size=%s\n" % [c.get_class(), c.position, c.size]
+				for c in _menu_win._main_box.get_children().slice(0, 3):
+					o += "  main %s pos=%s size=%s\n" % [c.get_class(), c.position, c.size]
+			_say(o)
 		"closemenu":
 			if _menu_win:
 				_menu_win.close()
