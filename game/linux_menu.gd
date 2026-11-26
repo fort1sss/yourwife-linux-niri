@@ -106,6 +106,9 @@ func _clear(box: VBoxContainer) -> void:
 
 func _fill(box: VBoxContainer, menu: PopupMenu, is_main: bool) -> void:
 	_clear(box)
+	_hover_btn.clear()
+	if is_main:
+		_main_hl = -1
 	if is_main:
 		var f: Font = lk._noto_font(400)
 		var mw := 0.0
@@ -157,12 +160,9 @@ func _fill(box: VBoxContainer, menu: PopupMenu, is_main: bool) -> void:
 			b.add_theme_stylebox_override("hover_pressed", lk.menu_box("row"))
 			b.add_theme_color_override("font_hover_color", lk.menu_color("text"))
 			b.add_theme_color_override("font_pressed_color", lk.menu_color("text"))
-			b.mouse_entered.connect(_on_main_hover.bind(i))
+			_setup_row(b, "main", i)
 		else:
-			# підменю: підсвічуємо рядок самі — на всю ширину, щойно курсор у будь-якій його частині
-			b.mouse_entered.connect(_hl_row.bind(b, true))
-			b.mouse_exited.connect(_hl_row.bind(b, false))
-		b.mouse_filter = Control.MOUSE_FILTER_STOP
+			_setup_row(b, "sub", i)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if sub:
 			var arrow := Label.new()
@@ -192,11 +192,41 @@ func _open_nested(parent: PopupMenu, nested: PopupMenu) -> void:
 	back.custom_minimum_size = Vector2(SUB_W - 24, ROW_H)
 	_style_button(back, false)
 	back.add_theme_color_override("font_color", lk.menu_color("dim"))
+	_setup_row(back, "sub", -1)
 	back.pressed.connect(func(): _fill(_sub_box, parent, false); _resize())
 	_sub_box.add_child(back)
 	_sub_box.move_child(back, 0)
 	_sub_scroll.scroll_vertical = 0
 	_resize()
+
+# ───────────── єдина логіка для ВСІХ кнопок меню ─────────────
+# Наведення визначаємо на КОЖЕН рух курсора в межах кнопки (не лише на «вхід»), тож підсвітка не
+# губиться й не застрягає; клік спрацьовує на натискання будь-де в підсвіченій області.
+var _hover_btn := {}           # панель -> підсвічена кнопка
+var _main_hl := -1
+func _setup_row(b: Button, panel: String, idx: int) -> void:
+	b.mouse_filter = Control.MOUSE_FILTER_STOP
+	b.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
+	for c in b.get_children():
+		if c is Control:
+			c.mouse_filter = Control.MOUSE_FILTER_IGNORE      # стрілка «›» не забирає наведення
+	b.gui_input.connect(func(e): if e is InputEventMouseMotion: _set_hover(panel, b, idx))
+	b.mouse_entered.connect(func(): _set_hover(panel, b, idx))
+	if panel != "main":
+		b.mouse_exited.connect(func(): if _hover_btn.get(panel) == b: _hl_row(b, false); _hover_btn.erase(panel))
+
+func _set_hover(panel: String, b: Button, idx: int) -> void:
+	if panel == "main":
+		if idx != _main_hl:
+			_on_main_hover(idx)
+		return
+	var prev = _hover_btn.get(panel)
+	if prev == b:
+		return
+	if prev != null and is_instance_valid(prev):
+		_hl_row(prev, false)
+	_hover_btn[panel] = b
+	_hl_row(b, true)
 
 func _hl_row(b: Button, on: bool) -> void:
 	if not is_instance_valid(b) or b.disabled:
@@ -209,6 +239,7 @@ func _hl_row(b: Button, on: bool) -> void:
 		b.add_theme_color_override(fc, col)
 
 func _on_main_hover(i: int) -> void:
+	_main_hl = i
 	_highlight_main(i)
 	var row := _main_box.get_child(i) if i < _main_box.get_child_count() else null
 	if row is Control:
@@ -300,6 +331,7 @@ func _fill_size_slider() -> void:
 		b.custom_minimum_size = Vector2(80, ROW_H)
 		_style_button(b, false)
 		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_setup_row(b, "sub", -1)
 		b.pressed.connect(func(): sl.value = v)
 		row.add_child(b)
 	_sub_box.add_child(row)
@@ -384,6 +416,7 @@ func _fill_keys() -> void:
 		_style_button(b, false)
 		b.add_theme_stylebox_override("normal", lk.menu_box("hover"))
 		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_setup_row(b, "keys", -1)
 		b.pressed.connect(func(): lk._capture_key(self, k, b))
 		_sub_box.add_child(b)
 	var hint := Label.new()
