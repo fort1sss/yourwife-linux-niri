@@ -243,6 +243,11 @@ func _run(line: String) -> void:
 			var t1 := Time.get_ticks_usec()
 			pet._show_context_menu(DisplayServer.mouse_get_position())
 			_say("ok gamemenu %d us" % (Time.get_ticks_usec() - t1))
+		"menupos":
+			var o := ""
+			for m in [pet._context_menu, pet._tray_menu]:
+				o += "%s visible=%s pos=%s DS=%s\n" % [m.name, m.visible, m.position, (DisplayServer.window_get_position(m.get_window_id()) if m.visible else Vector2i(-1, -1))]
+			_say(o)
 		"settings":
 			pet._show_settings()
 		"workshop":
@@ -687,11 +692,24 @@ func _linux_ui_setup() -> void:
 # під Wine це 2-20 мс за раз, і меню відкривалось секундами (і довше з кожним разом). Тож правий клік
 # по героїні перехоплюємо й показуємо рідне PopupMenu рушія з тими самими пунктами й діями гри
 # (id_pressed уже під'єднаний до _on_menu_item_pressed гри) — воно будується за мілісекунди.
-func show_native_menu(source: PopupMenu, point) -> void:
+# Під xwayland-satellite кожне X-вікно гри стоїть у (0,0), а Wine рахує координати миші від того
+# місця, де, на його думку, вікно стоїть. Тож меню й підменю «ставимо» для Wine в (0,0) — тоді
+# кліки й наведення збігаються з картинкою; на екрані їх розміщує niri-pin (біля курсора / праворуч).
+func show_native_menu(source: PopupMenu, _point) -> void:
 	_patch_context_menu(source)
+	_pin_popups_to_origin(source)
 	if source.visible:
 		source.hide()
-	source.popup(Rect2i(Vector2i(point), Vector2i.ZERO))
+	source.popup(Rect2i(Vector2i.ZERO, Vector2i.ZERO))
+
+func _pin_popups_to_origin(m: PopupMenu) -> void:
+	if not m.has_meta("lk_origin"):
+		m.set_meta("lk_origin", true)
+		m.about_to_popup.connect(func(): m.set_deferred("position", Vector2i.ZERO))
+		m.popup_window = true
+	for c in m.get_children():
+		if c is PopupMenu:
+			_pin_popups_to_origin(c)
 
 func _show_fast_menu(pet: Node, at: Vector2) -> void:
 	var t := Time.get_ticks_usec()
