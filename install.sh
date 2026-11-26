@@ -16,6 +16,7 @@ USERDATA="${STEAM_LIBRARY:-$HOME/.local/share/Steam}/steamapps/compatdata/333942
 install -Dm644 game/linux_key.gd "$USERDATA/linux_key.gd"; echo "linux_key.gd -> $USERDATA"
 install -Dm644 game/linux_menu_window.gd "$USERDATA/linux_menu_window.gd"
 install -Dm644 game/linux_menu.gd "$USERDATA/linux_menu.gd"
+install -Dm644 game/linux_workshop_window.gd "$USERDATA/linux_workshop_window.gd"
 touch "$USERDATA/linux_alpha"   # режим справжньої прозорості
 # Wine: 32-бітні (ARGB) вікна — справжній альфа-канал замість чорного фону
 PFX="${STEAM_LIBRARY:-$HOME/.local/share/Steam}/steamapps/compatdata/3339420/pfx"

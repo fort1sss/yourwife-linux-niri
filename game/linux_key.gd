@@ -557,6 +557,182 @@ func _run(line: String) -> void:
 			_ws_service.refresh_all()
 			await get_tree().create_timer(5.0).timeout
 			_say("hidden window; spikes: %s" % ", ".join(PackedStringArray(_spikes)))
+		"subbench":
+			var svc := _ws_service
+			var o := ""
+			var sig := []
+			for sg in svc.get_script().get_script_signal_list():
+				sig.append(sg.name + str(sg.args.map(func(x): return x.name)))
+			o += "signals: " + str(sig) + "\n"
+			var t := Time.get_ticks_usec()
+			svc._rebuild_subscribed_content()
+			o += "_rebuild_subscribed_content %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			t = Time.get_ticks_usec()
+			pet._on_subscribed_characters_changed(svc.get_subscribed_characters())
+			o += "pet._on_subscribed_characters_changed %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			t = Time.get_ticks_usec()
+			svc._save_cached_subscriptions()
+			o += "_save_cached_subscriptions %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			t = Time.get_ticks_usec()
+			if _ws_render.is_valid():
+				_ws_render.callv([null, null])
+			o += "window render %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			t = Time.get_ticks_usec()
+			svc.is_subscribed(3841007565)
+			o += "is_subscribed %d us\n" % (Time.get_ticks_usec() - t)
+			_say(o)
+		"subbench2":
+			var svc := _ws_service
+			var st = svc.get("_steam")
+			var o := ""
+			var subs: Array = svc.get_items("subscribed")
+			var t := Time.get_ticks_usec()
+			var n := 0
+			for it in subs:
+				st.getItemInstallInfo(int(it["file_id"]))
+				n += 1
+			o += "getItemInstallInfo x%d: %d ms\n" % [n, (Time.get_ticks_usec() - t) / 1000]
+			t = Time.get_ticks_usec()
+			for it in subs:
+				st.getItemState(int(it["file_id"]))
+			o += "getItemState x%d: %d ms\n" % [n, (Time.get_ticks_usec() - t) / 1000]
+			t = Time.get_ticks_usec()
+			st.getSubscribedItems()
+			o += "getSubscribedItems: %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			t = Time.get_ticks_usec()
+			var files := 0
+			for it in subs:
+				var ip := str(it.get("install_path", ""))
+				if ip != "":
+					files += svc._find_files_recursive(ip, ".model3.json").size()
+			o += "_find_files_recursive x%d: %d ms (%d model files)\n" % [n, (Time.get_ticks_usec() - t) / 1000, files]
+			t = Time.get_ticks_usec()
+			for it in subs:
+				var ip := str(it.get("install_path", ""))
+				if ip != "":
+					FileAccess.get_file_as_string(ip.path_join("workshop_character.json"))
+			o += "read workshop_character.json x%d: %d ms\n" % [n, (Time.get_ticks_usec() - t) / 1000]
+			_say(o)
+		"subbench3":
+			var svc := _ws_service
+			var o := ""
+			var subs: Array = svc.get_items("subscribed")
+			var t := Time.get_ticks_usec()
+			var n := 0
+			for it in subs:
+				var ip := str(it.get("install_path", ""))
+				if ip == "":
+					continue
+				var models: Array = svc._find_files_recursive(ip, ".model3.json")
+				if models.size() > 0:
+					svc._validate_model_package(ip, models[0])
+					n += 1
+			o += "_validate_model_package x%d: %d ms\n" % [n, (Time.get_ticks_usec() - t) / 1000]
+			t = Time.get_ticks_usec()
+			pet._refresh_native_character_checks()
+			o += "_refresh_native_character_checks %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			t = Time.get_ticks_usec()
+			pet._rebuild_context_menu()
+			o += "_rebuild_context_menu %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			t = Time.get_ticks_usec()
+			pet._all_characters()
+			o += "_all_characters %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			t = Time.get_ticks_usec()
+			pet._populate_menu(pet._context_menu) if false else null
+			_say(o)
+		"subbench4":
+			var o := ""
+			var cm: PopupMenu = pet._character_menu
+			var t := Time.get_ticks_usec()
+			for i in cm.item_count:
+				if cm.is_item_checkable(i):
+					cm.set_item_checked(i, cm.is_item_checked(i))
+			o += "set_item_checked x%d: %d ms\n" % [cm.item_count, (Time.get_ticks_usec() - t) / 1000]
+			var chars: Array = pet._all_characters()
+			o += "chars %d, first: %s\n" % [chars.size(), str(chars[0]).left(150) if chars.size() > 0 else "-"]
+			t = Time.get_ticks_usec()
+			for c in chars:
+				pet._character_display_name(c)
+			o += "_character_display_name x%d: %d ms\n" % [chars.size(), (Time.get_ticks_usec() - t) / 1000]
+			var sigs := []
+			for cn in cm.get_signal_list():
+				var cc = cm.get_signal_connection_list(cn.name)
+				if cc.size() > 0:
+					sigs.append(cn.name + ":" + str(cc.size()))
+			o += "CharacterMenu signal conns: %s\n" % str(sigs)
+			o += "tray popups: %s\n" % str(_all_popups(pet).map(func(x): return x.name + (" native" if x.prefer_native_menu else "")))
+			_say(o)
+		"rids":
+			var o := ""
+			for pp in pet.get_script().get_script_property_list():
+				if pp.usage & PROPERTY_USAGE_SCRIPT_VARIABLE:
+					var v = pet.get(pp.name)
+					if typeof(v) == TYPE_RID or (typeof(v) == TYPE_DICTIONARY and str(v).contains("RID")) or (typeof(v) == TYPE_ARRAY and str(v).contains("RID")) or pp.name.contains("native") or pp.name.contains("tray"):
+						o += "%s (%s) = %s\n" % [pp.name, type_string(typeof(v)), str(v).left(160)]
+			var nm = NativeMenu
+			o += "NativeMenu feature: %s\n" % str(nm.has_feature(NativeMenu.FEATURE_POPUP_MENU))
+			_say(o)
+		"subbench5":
+			var o := ""
+			var t := Time.get_ticks_usec()
+			pet._refresh_native_character_checks()
+			o += "refresh (as is) %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			var tcm: PopupMenu = pet._tray_character_menu
+			var tc := tcm.item_count
+			t = Time.get_ticks_usec()
+			pet._character_menu.set_item_checked(1, pet._character_menu.is_item_checked(1))
+			for k in 10:
+				tcm.set_item_checked(1, tcm.is_item_checked(1))
+			o += "10x tray set_item_checked %d ms (tray items %d, native=%s)\n" % [(Time.get_ticks_usec() - t) / 1000, tc, str(tcm.prefer_native_menu)]
+			t = Time.get_ticks_usec()
+			for k in 10:
+				pet._character_menu.set_item_checked(1, pet._character_menu.is_item_checked(1))
+			o += "10x ctx set_item_checked %d ms\n" % ((Time.get_ticks_usec() - t) / 1000)
+			_say(o)
+		"subbench6":
+			var added := {}
+			var cb := func(n): 
+				var w = n.get_window()
+				var k := str(w.title) if w else "?"
+				added[k] = added.get(k, 0) + 1
+			get_tree().node_added.connect(cb)
+			var t := Time.get_ticks_usec()
+			pet._refresh_native_character_checks()
+			var ms := (Time.get_ticks_usec() - t) / 1000
+			get_tree().node_added.disconnect(cb)
+			var cnt := 0
+			for c in pet.get_children():
+				cnt += 1
+			_say("refresh %d ms, nodes added: %s" % [ms, str(added)])
+		"wsrender2":
+			var w = get_tree().root.get_node_or_null("DesktopPet/@Window@153")
+			_spikes.clear()
+			var added := [0]
+			var cb := func(_n): added[0] += 1
+			get_tree().node_added.connect(cb)
+			pet._refresh_native_character_checks()
+			await get_tree().process_frame
+			await get_tree().process_frame
+			get_tree().node_added.disconnect(cb)
+			_say("cards %d, nodes added %d, spikes %s\nstats %s" % [w.get("_grid").get_child_count(), added[0], ", ".join(PackedStringArray(_spikes)), str(w.get("lk_stats"))])
+		"subtest":
+			var svc := _ws_service
+			var fid := 0
+			var title := ""
+			for it in svc.get_items("browse"):
+				if not it.get("subscribed") and str(it.get("content_type")) == "character":
+					fid = int(it["file_id"])
+					title = str(it["title"])
+					break
+			_spikes.clear()
+			svc.subscribe(fid)
+			await get_tree().create_timer(8.0).timeout
+			var s1 := ", ".join(PackedStringArray(_spikes))
+			var subd: bool = svc.is_subscribed(fid)
+			_spikes.clear()
+			svc.unsubscribe(fid)
+			await get_tree().create_timer(8.0).timeout
+			_say("item %d '%s'\nsubscribe -> subscribed=%s, spikes: %s\nunsubscribe -> subscribed=%s, spikes: %s" % [fid, title, subd, s1, svc.is_subscribed(fid), ", ".join(PackedStringArray(_spikes))])
 		"closemenu":
 			if _menu_win:
 				_menu_win.close()
@@ -1021,7 +1197,9 @@ func _linux_ui_setup() -> void:
 	t.toggled.connect(_on_linux_autostart)
 	pet._settings_window.visibility_changed.connect(_patch_settings)
 	_hook_themed_windows.call_deferred()
+	_swap_workshop_script.call_deferred()
 	_hook_workshop_previews.call_deferred()
+	_no_native_menus.call_deferred()
 	_fix_font(ThemeDB.fallback_font)
 	var pt := ThemeDB.get_project_theme()
 	if pt:
@@ -1855,7 +2033,7 @@ func _hook_themed_windows() -> void:
 		if _themed_hooked.has(k):
 			continue
 		_themed_hooked[k] = true
-		w.visibility_changed.connect(func(): if w.visible: _queue_restyle(w); _report_later(w))
+		w.visibility_changed.connect(func(): if w.visible: _on_themed_shown(w))
 		if w.visible:
 			_queue_restyle(w)
 			_report_later(w)
@@ -1866,9 +2044,12 @@ func _on_node_added_theme(n: Node) -> void:
 		return
 	var w: Window = n.get_window()
 	if w and _themed_hooked.has(w.get_instance_id()):
-		_style_node(n, _scheme_colors(), PALETTE[_theme.accent][2], PALETTE[_theme.second][2])
-		if n is Control:
-			_fix_font(n.get_theme_font("font"))
+		if _theme.scheme == "light":
+			return            # «як у грі»: нічого перефарбовувати не треба
+		_style_queue.append(n)
+		if not _style_queue_armed:
+			_style_queue_armed = true
+			_flush_style_queue.call_deferred()
 
 # розмір вікна, який хоче гра (Майстерня 1200x720 тощо), — у файл, yw-gaze виставляє його через niri
 func _report_later(w: Window) -> void:
@@ -1878,6 +2059,30 @@ func _report_later(w: Window) -> void:
 		var need := Vector2i(w.get_contents_minimum_size())
 		w.size = Vector2i(maxi(w.size.x, need.x), maxi(w.size.y, need.y))
 		report_window_size(w)
+
+# нові елементи вікон гри фарбуємо пачкою раз на кадр (кожна зміна теми окремо змушує Godot
+# перераховувати вигляд — по одному це давало ~0.2 с на перебудову карток Майстерні)
+var _style_queue: Array = []
+var _style_queue_armed := false
+func _flush_style_queue() -> void:
+	_style_queue_armed = false
+	var sc := _scheme_colors()
+	var acc: Color = PALETTE[_theme.accent][2]
+	var sec: Color = PALETTE[_theme.second][2]
+	var q := _style_queue
+	_style_queue = []
+	for n in q:
+		if is_instance_valid(n):
+			_style_node(n, sc, acc, sec)
+
+var _styled_scheme := {}       # вікно -> схема, якою його вже пофарбовано
+func _on_themed_shown(w: Window) -> void:
+	_fix_window_fonts(w)
+	var key := "%s|%d|%d" % [_theme.scheme, _theme.accent, _theme.second]
+	var done: String = _styled_scheme.get(w.get_instance_id(), "light-orig" if _theme.scheme == "light" else "")
+	if done != key and not (done == "light-orig" and _theme.scheme == "light"):
+		_queue_restyle(w)
+	_report_later(w)
 
 func _queue_restyle(w: Window) -> void:
 	var k: int = w.get_instance_id()
@@ -1916,6 +2121,59 @@ func _fix_window_fonts(w: Window) -> void:
 # (~18 КБ замість ~480 КБ) — підміняємо preview_url ДО того, як вікно побудує картки.
 const PREVIEW_Q := "?imw=360&imh=270&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=false"
 var _ws_service: Node = null
+# Меню трею гра дзеркалить у системні меню Windows (NativeMenu). Під Wine кожне оновлення пункту
+# такого меню повільне: оновлення галочок персонажів займало ~0.4 с і фрізило гру після кожної
+# підписки/відписки. Трей на Linux не працює, тож вимикаємо дзеркалення для всіх меню гри.
+func _no_native_menus() -> void:
+	var pet := _pet()
+	if pet == null:
+		return
+	for n in _all_popups(pet):
+		if n.prefer_native_menu:
+			n.prefer_native_menu = false
+	var si = pet.get("status_indicator")
+	if si and si.get("menu") != null:
+		si.set("menu", NodePath(""))
+
+func _all_popups(n: Node) -> Array:
+	var r := []
+	for c in n.get_children():
+		if c is PopupMenu:
+			r.append(c)
+		r.append_array(_all_popups(c))
+	return r
+
+# вікно Майстерні — на прискорений нащадок оригінального скрипту (linux_workshop_window.gd):
+# повторне використання карток замість перебудови всіх ~2300 елементів на кожну підписку
+func _swap_workshop_script() -> void:
+	if not FileAccess.file_exists("user://linux_workshop_window.gd"):
+		return
+	var w: Node = null
+	for c in _pet().get_children():
+		if c.get_script() and str(c.get_script().resource_path).ends_with("workshop_window.gd"):
+			w = c
+	if w == null:
+		return
+	var props := {}
+	for pp in w.get_script().get_script_property_list():
+		if pp.usage & PROPERTY_USAGE_SCRIPT_VARIABLE:
+			props[pp.name] = w.get(pp.name)
+	var before := {}
+	for c in w.get_children():
+		before[c.get_instance_id()] = true
+	var sc = load("user://linux_workshop_window.gd")
+	if sc == null:
+		return
+	w.set_script(sc)
+	for k in props:
+		w.set(k, props[k])
+	for c in w.get_children():
+		if not before.has(c.get_instance_id()):
+			c.queue_free()            # якщо _init нового скрипту щось збудував удруге
+	if w.has_method("lk_setup"):
+		w.lk_setup()
+		w._render_items()
+
 func _hook_workshop_previews() -> void:
 	var pet := _pet()
 	for c in pet.get_children():
@@ -1929,6 +2187,13 @@ func _hook_workshop_previews() -> void:
 	for c in cons:
 		_ws_service.items_changed.disconnect(c.callable)
 	_ws_service.items_changed.connect(func(_a = null, _b = null): _shrink_previews())
+	# Підписка/відписка: Steam шле кілька подій поспіль (підписано, завантажено, встановлено), і
+	# головне вікно щоразу перебудовувало список персонажів (~0.4 с). Збираємо в одну.
+	var scc: Array = _ws_service.get_signal_connection_list("subscribed_characters_changed")
+	for c in scc:
+		_ws_service.subscribed_characters_changed.disconnect(c.callable)
+		var cb: Callable = c.callable
+		_ws_service.subscribed_characters_changed.connect(func(_chars = null): _debounce("subs", 0.25, func(): cb.call(_ws_service.get_subscribed_characters())))
 	# Steam шле дані сторінками, і вікно Майстерні після КОЖНОЇ заново будувало всі картки.
 	# Збираємо в одну перебудову (через 0.15 с тиші); якщо вікно сховане — до його відкриття.
 	for c in cons:
@@ -1940,6 +2205,12 @@ func _hook_workshop_previews() -> void:
 			obj.visibility_changed.connect(func(): if obj.visible and _ws_dirty: _ws_flush())
 		else:
 			_ws_service.items_changed.connect(c.callable, c.flags)
+
+var _debounce_cb := {}
+func _debounce(key: String, sec: float, cb: Callable) -> void:
+	var token := Time.get_ticks_usec()
+	_debounce_cb[key] = token
+	get_tree().create_timer(sec).timeout.connect(func(): if _debounce_cb.get(key) == token: _debounce_cb.erase(key); cb.call())
 
 var _ws_window: Window = null
 var _ws_render: Callable
@@ -1983,6 +2254,7 @@ func _do_restyle(w: Window) -> void:
 		_fix_window_fonts(w)
 		_style_settings(w)
 		_style_tree_popups(w)
+		_styled_scheme[w.get_instance_id()] = "%s|%d|%d" % [_theme.scheme, _theme.accent, _theme.second]
 	_restyle_ms += Time.get_ticks_msec() - _t0
 
 func _restyle_all() -> void:
