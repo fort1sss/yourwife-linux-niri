@@ -153,10 +153,30 @@ func _fill(box: VBoxContainer, menu: PopupMenu, is_main: bool) -> void:
 			arrow.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT)
 			arrow.position.x -= 14
 			b.add_child(arrow)
-			b.pressed.connect(_on_main_hover.bind(i))
+			if is_main:
+				b.pressed.connect(_on_main_hover.bind(i))
+			else:
+				# вкладене підменю (напр. «Основний колір») — показуємо в тій самій панелі з «‹ Назад»
+				b.pressed.connect(_open_nested.bind(menu, sub))
 		else:
 			b.pressed.connect(_activate.bind(menu, i))
 		box.add_child(b)
+
+func _open_nested(parent: PopupMenu, nested: PopupMenu) -> void:
+	nested.about_to_popup.emit()
+	_fill(_sub_box, nested, false)
+	var back := Button.new()
+	back.text = "‹  " + lk._t("Назад", "Back")
+	back.focus_mode = Control.FOCUS_NONE
+	back.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	back.custom_minimum_size = Vector2(SUB_W - 24, ROW_H)
+	_style_button(back, false)
+	back.add_theme_color_override("font_color", lk.menu_color("dim"))
+	back.pressed.connect(func(): _fill(_sub_box, parent, false); _resize())
+	_sub_box.add_child(back)
+	_sub_box.move_child(back, 0)
+	_sub_scroll.scroll_vertical = 0
+	_resize()
 
 func _on_main_hover(i: int) -> void:
 	_highlight_main(i)
@@ -268,13 +288,18 @@ func _apply_size_pending() -> void:
 	_size_pending = -1.0
 
 func _highlight_main(i: int) -> void:
-	# рядки головного меню відповідають пунктам 1:1 (роздільник = HSeparator/Label)
+	# рядки головного меню відповідають пунктам 1:1 (роздільник = HSeparator/Label).
+	# Активному — підсвітка в УСІХ станах (і під курсором теж), решті — прозорий фон у всіх станах.
 	for k in _main_box.get_child_count():
 		var c := _main_box.get_child(k)
 		if c is Button:
 			var on := k == i
-			c.add_theme_stylebox_override("normal", lk.menu_box("hover") if on else lk.menu_box("row"))
-			c.add_theme_color_override("font_color", lk.menu_color("hover_text") if on else lk.menu_color("text"))
+			var box: StyleBox = lk.menu_box("hover") if on else lk.menu_box("row")
+			var col: Color = lk.menu_color("hover_text") if on else lk.menu_color("text")
+			for st in ["normal", "hover", "pressed", "hover_pressed"]:
+				c.add_theme_stylebox_override(st, box)
+			for fc in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
+				c.add_theme_color_override(fc, col)
 
 func _activate(menu: PopupMenu, i: int) -> void:
 	var id := menu.get_item_id(i)
