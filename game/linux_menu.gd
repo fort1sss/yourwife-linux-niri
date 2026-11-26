@@ -17,6 +17,8 @@ var _left := false               # підменю ліворуч від голо
 var _main_x := 0
 var _sub_x := 0
 var _win_y := 0
+var _win_h := 600                # висота вікна меню — фіксована на весь час, поки меню відкрите
+var _sub_anchor_y := 0.0         # верх пункту головного меню, чиє підменю показане
 var _scr := Vector2i(1920, 1080)
 var _main_panel: PanelContainer
 var _sub_panel: PanelContainer
@@ -190,6 +192,9 @@ func _open_nested(parent: PopupMenu, nested: PopupMenu) -> void:
 
 func _on_main_hover(i: int) -> void:
 	_highlight_main(i)
+	var row := _main_box.get_child(i) if i < _main_box.get_child_count() else null
+	if row is Control:
+		_sub_anchor_y = row.position.y + 10.0
 	if i == _sub_for:
 		return
 	var sub := _source.get_item_submenu_node(i)
@@ -399,25 +404,28 @@ func _place() -> void:
 	wx = clampi(wx, 0, maxi(_scr.x - total, 0))
 	var main_h := int(_main_box.get_combined_minimum_size().y) + 20
 	_win_y = clampi(cy, 0, maxi(_scr.y - main_h - 8, 0))
+	# вікно одразу на всю висоту до низу екрана й на ширину «головне + підменю» — і далі його розмір
+	# не змінюється: niri не перераховує положення, тож головне меню не смикається від підменю
+	_win_h = maxi(_scr.y - _win_y - 4, main_h)
+	size = Vector2i(total, _win_h)
 	var f := FileAccess.open("user://linux_menu_pos.txt", FileAccess.WRITE)
 	if f:
 		f.store_string("%d %d\n" % [wx, _win_y])
 		f.close()
 
 func _resize() -> void:
+	# лише розкладка всередині вікна фіксованого розміру: головне меню — на місці,
+	# підменю — навпроти пункту, з якого відкрите, підняте, якщо не влазить донизу
 	var main_h := _main_box.get_combined_minimum_size().y + 20
-	var h := main_h
-	if _sub_panel.visible:
-		var sub_h := _sub_box.get_combined_minimum_size().y + 20
-		var max_h := maxi(_scr.y - _win_y - 8, 200)
-		var sh := mini(int(sub_h), max_h)
-		_sub_scroll.custom_minimum_size = Vector2(SUB_W - 20, sh - 20)
-		_sub_panel.size = Vector2(SUB_W, sh)
-		h = maxf(h, sh)
 	_main_panel.position = Vector2(_main_x, 0)
 	_main_panel.size = Vector2(_main_w, main_h)
-	_sub_panel.position = Vector2(_sub_x, 0)
-	size = Vector2i(_main_w + 6 + SUB_W, int(h))
+	if _sub_panel.visible:
+		var sub_h := _sub_box.get_combined_minimum_size().y + 20
+		var sh := mini(int(sub_h), _win_h)
+		_sub_scroll.custom_minimum_size = Vector2(SUB_W - 20, sh - 20)
+		_sub_panel.size = Vector2(SUB_W, sh)
+		var sy := clampf(_sub_anchor_y - 10.0, 0.0, float(_win_h - sh))
+		_sub_panel.position = Vector2(_sub_x, sy)
 
 # ───────────── вигляд ─────────────
 func _apply_style() -> void:
