@@ -12,6 +12,7 @@ grep -q 'include "yourwife.kdl"' ~/.config/niri/config.kdl || printf '\ninclude 
 GAME="${STEAM_LIBRARY:-$HOME/.local/share/Steam}/steamapps/common/YourWife"
 USERDATA="${STEAM_LIBRARY:-$HOME/.local/share/Steam}/steamapps/compatdata/3339420/pfx/drive_c/users/steamuser/AppData/Roaming/Godot/app_userdata/你的老婆"
 install -Dm644 game/linux_key.gd "$USERDATA/linux_key.gd"; echo "linux_key.gd -> $USERDATA"
+install -Dm644 game/linux_menu_window.gd "$USERDATA/linux_menu_window.gd"
 touch "$USERDATA/linux_alpha"   # режим справжньої прозорості
 # Wine: 32-бітні (ARGB) вікна — справжній альфа-канал замість чорного фону
 PFX="${STEAM_LIBRARY:-$HOME/.local/share/Steam}/steamapps/compatdata/3339420/pfx"

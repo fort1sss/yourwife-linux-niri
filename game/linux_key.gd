@@ -239,6 +239,10 @@ func _run(line: String) -> void:
 			var t0 := Time.get_ticks_usec()
 			_show_fast_menu(pet, Vector2(DisplayServer.mouse_get_position() - DisplayServer.window_get_position()))
 			_say("ok menu %d us" % (Time.get_ticks_usec() - t0))
+		"gamemenu":
+			var t1 := Time.get_ticks_usec()
+			pet._show_context_menu(DisplayServer.mouse_get_position())
+			_say("ok gamemenu %d us" % (Time.get_ticks_usec() - t1))
 		"settings":
 			pet._show_settings()
 		"workshop":
@@ -653,8 +657,15 @@ func _linux_ui_setup() -> void:
 	var cm: PopupMenu = pet._context_menu
 	_theme_setup(cm)
 	cm.about_to_popup.connect(_patch_context_menu.bind(cm))
-	# швидке меню: перехоплюємо правий клік до гри (window_input спрацьовує раніше за _input вузлів)
-	get_tree().root.window_input.connect(_on_root_input)
+	# швидке меню: підміняємо скрипт ігрового вікна меню — гра сама вирішує, коли показати меню,
+	# а показуємо його ми рідним PopupMenu (див. linux_menu_window.gd)
+	var pmw = pet.get("_pet_menu_window")
+	if pmw and FileAccess.file_exists("user://linux_menu_window.gd"):
+		pmw.hide()
+		for ch in pmw.get_children():
+			ch.queue_free()
+		pmw.set_script(load("user://linux_menu_window.gd"))
+		pmw.set("linux", self)
 	# гра показує меню власним вікном PetMenuWindow, яке будує пункти з cm у момент open_at —
 	# тож cm має бути підготовлене заздалегідь (і після кожної перебудови грою)
 	_patch_context_menu(cm)
@@ -676,16 +687,11 @@ func _linux_ui_setup() -> void:
 # під Wine це 2-20 мс за раз, і меню відкривалось секундами (і довше з кожним разом). Тож правий клік
 # по героїні перехоплюємо й показуємо рідне PopupMenu рушія з тими самими пунктами й діями гри
 # (id_pressed уже під'єднаний до _on_menu_item_pressed гри) — воно будується за мілісекунди.
-func _on_root_input(event: InputEvent) -> void:
-	if not (event is InputEventMouseButton) or event.button_index != MOUSE_BUTTON_RIGHT:
-		return
-	var pet := _pet()
-	if pet == null or bool(pet.get("_character_hidden")):
-		return
-	get_tree().root.set_input_as_handled()
-	if event.pressed:
-		return
-	_show_fast_menu(pet, event.position)
+func show_native_menu(source: PopupMenu, point) -> void:
+	_patch_context_menu(source)
+	if source.visible:
+		source.hide()
+	source.popup(Rect2i(Vector2i(point), Vector2i.ZERO))
 
 func _show_fast_menu(pet: Node, at: Vector2) -> void:
 	var t := Time.get_ticks_usec()
