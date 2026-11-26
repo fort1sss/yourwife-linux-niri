@@ -400,7 +400,7 @@ func _activate(menu: PopupMenu, i: int) -> void:
 	if menu.index_pressed.get_connections().size() > 0:
 		menu.index_pressed.emit(i)
 
-# «Емоції»: категорії (заголовок + емоції); у категорії вмикається одна, категорії змішуються.
+# «Емоції»: категорії лише для зручності; вмикати разом можна будь-які емоції.
 # Меню не закривається після кліку — можна одразу комбінувати.
 func _fill_expr_panel() -> void:
 	var keep := _sub_scroll.scroll_vertical
