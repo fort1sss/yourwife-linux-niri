@@ -366,13 +366,14 @@ def main():
         # Під XWayland усі X-вікна стоять у (0,0) одне на одному, і X сам вирішує, кому дістанеться
         # наведення, за своїм порядком вікон. Тому, коли курсор заходить на X-вікно в niri (героїня,
         # Steam...), піднімаємо саме його наверх X-стосу — інакше наведення на героїню відкривало меню Steam.
+        # спершу інші вікна (меню, налаштування гри — вони на екрані ПОВЕРХ героїні), потім героїня;
+        # інакше над меню, що перекриває героїню, X віддавав рух миші героїні й кнопки меню «мертвіли»
         hov = None
-        if g and inside(g, cx, cy):
+        r = next((r for r in others if inside(r, cx, cy)), None)
+        if r:
+            hov = ("other", r[2], r[3])
+        elif g and inside(g, cx, cy):
             hov = ("game", g[2], g[3])
-        else:
-            r = next((r for r in others if inside(r, cx, cy)), None)
-            if r:
-                hov = ("other", r[2], r[3])
         if hov and hov != was_over:
             target = xwin if hov[0] == "game" else x_game_window(d, hov[1], hov[2])
             if target:

@@ -150,30 +150,169 @@ func _expr_files() -> Dictionary:
 				out[f.trim_suffix(".exp3.json")] = root.path_join(f)
 	return out
 
-func _set_expression(name: String) -> String:
-	_expr.clear()
-	_expr_name = ""
-	if name == "" or name == "off" or name == "none":
-		return "ok expr off"
+# ───────────── Емоції: категорії й змішування (для БУДЬ-ЯКОЇ моделі) ─────────────
+# Емоції — файли *.exp3.json, кожна змінює свій набір параметрів моделі. Емоції, що зачіпають
+# хоч один спільний параметр, — в одній категорії (вмикається одна з них). Емоції з різних
+# категорій не заважають одна одній, тож їх можна змішувати. Назву категорії вгадуємо за
+# назвами емоцій і параметрів (Очі, Рот, Сльози, Одяг, Ноги…).
+var _active := {}               # індекс категорії -> назва активної емоції
+var _expr_params := {}          # назва емоції -> {ParamId: [blend, value]}
+var _groups := []               # [{name, items:[назви]}]
+var _groups_key := ""
+
+const CATS := [
+	["Сльози", "Tears", ["tear", "cry", "sob", "weep"]],
+	["Рум'янець", "Blush", ["blush", "cheek", "flush"]],
+	["Очі", "Eyes", ["eye", "pupil", "iris", "xray", "gaze", "glow"]],
+	["Брови", "Brows", ["brow"]],
+	["Рот", "Mouth", ["mouth", "tongue", "smile", "teeth", "lip", "fang"]],
+	["Волосся", "Hair", ["hair", "bald", "ponytail", "bang"]],
+	["Голова й аксесуари", "Head & accessories", ["hat", "beret", "halo", "cap", "ear", "horn", "crown", "ribbon", "glasses", "mask"]],
+	["Верх одягу", "Top", ["shirt", "sleeve", "jacket", "coat", "top", "bra", "chest", "breast"]],
+	["Сукня й низ", "Dress & bottom", ["dress", "skirt", "underwear", "pant", "short", "cloth", "outfit"]],
+	["Ноги й взуття", "Legs & shoes", ["leg", "thigh", "sock", "stock", "shoe", "boot", "feet", "foot"]],
+	["Руки", "Arms", ["arm", "hand", "glove", "finger"]],
+	["Поза", "Pose", ["pose", "body", "switch"]],
+	["Настрій", "Mood", ["angry", "sad", "happy", "shock", "confus", "mad", "gloom", "exit", "expression", "love", "smug", "fear", "surpr"]],
+]
+
+func _load_expr_params(files: Dictionary) -> void:
+	_expr_params.clear()
+	for name in files:
+		var data = JSON.parse_string(FileAccess.get_file_as_string(files[name]))
+		var pm := {}
+		if typeof(data) == TYPE_DICTIONARY:
+			for prm in data.get("Parameters", []):
+				pm[str(prm.get("Id", ""))] = [str(prm.get("Blend", "Add")), float(prm.get("Value", 0.0))]
+		_expr_params[name] = pm
+
+# слова з назви: "EyeBallX" -> eye ball x, "Underwear Visibility" -> underwear visibility
+func _words(t: String) -> PackedStringArray:
+	var re := RegEx.new()
+	re.compile("[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
+	var out := PackedStringArray()
+	for m in re.search_all(t):
+		out.append(m.get_string().to_lower())
+	return out
+
+func _guess_cat(items: Array) -> int:
+	var votes := {}
+	for it in items:
+		var name_words := _words(str(it))
+		var param_words := PackedStringArray()
+		for pid in _expr_params.get(it, {}):
+			param_words.append_array(_words(str(pid)))
+		for ci in CATS.size():
+			var hit := 0
+			for kw in CATS[ci][2]:
+				for w in name_words:
+					if w.begins_with(kw):
+						hit = maxi(hit, 3)      # назва емоції важить більше
+				for w in param_words:
+					if w.begins_with(kw):
+						hit = maxi(hit, 1)
+			if hit > 0:
+				votes[ci] = votes.get(ci, 0) + hit
+	var best := -1
+	for ci in votes:
+		if best < 0 or votes[ci] > votes[best]:
+			best = ci
+	return best
+
+func expr_groups() -> Array:
 	var files := _expr_files()
+	var m := _model()
+	var key := str(m.get("assets") if m else "") + "|" + str(files.size())
+	if key == _groups_key:
+		return _groups
+	_groups_key = key
+	_active.clear()
+	_expr.clear()
+	_active.clear()
+	_expr_name = ""
+	_load_expr_params(files)
+	# об'єднання емоцій, що мають спільні параметри (union-find)
+	var names := files.keys()
+	names.sort()
+	var parent := {}
+	for n in names:
+		parent[n] = n
+	var owner := {}
+	for n in names:
+		for pid in _expr_params[n]:
+			if owner.has(pid):
+				var a = _find(parent, n)
+				var b = _find(parent, owner[pid])
+				if a != b:
+					parent[a] = b
+			else:
+				owner[pid] = n
+	var by_root := {}
+	for n in names:
+		var r = _find(parent, n)
+		if not by_root.has(r):
+			by_root[r] = []
+		by_root[r].append(n)
+	var tmp := []
+	for r in by_root:
+		var items: Array = by_root[r]
+		items.sort()
+		tmp.append({"cat": _guess_cat(items), "items": items})
+	tmp.sort_custom(func(x, y): return (x.cat if x.cat >= 0 else 99) < (y.cat if y.cat >= 0 else 99))
+	_groups = []
+	var used := {}
+	for g in tmp:
+		var nm: String = _t("Інше", "Other") if g.cat < 0 else _t(CATS[g.cat][0], CATS[g.cat][1])
+		used[nm] = used.get(nm, 0) + 1
+		if used[nm] > 1:
+			nm += " " + str(used[nm])
+		_groups.append({"name": nm, "items": g["items"]})
+	return _groups
+
+func _find(parent: Dictionary, x):
+	while parent[x] != x:
+		parent[x] = parent[parent[x]]
+		x = parent[x]
+	return x
+
+func is_expr_active(name: String) -> bool:
+	return name in _active.values()
+
+func _rebuild_expr() -> void:
+	_expr.clear()
+	for gi in _active:
+		var pm: Dictionary = _expr_params.get(_active[gi], {})
+		for pid in pm:
+			_expr[pid] = pm[pid]
+	_expr_name = ", ".join(PackedStringArray(_active.values()))
+
+# увімкнути/вимкнути емоцію; в її категорії попередня вимикається; "off" — скинути всі
+func _set_expression(name: String) -> String:
+	var groups := expr_groups()
+	if name == "" or name == "off" or name == "none":
+		_active.clear()
+		_rebuild_expr()
+		return "ok expr off"
 	var key := ""
-	for k in files:
-		if k.to_lower() == name.to_lower():
-			key = k
+	for g in groups:
+		for it in g["items"]:
+			if str(it).to_lower() == name.to_lower():
+				key = it
 	if key == "":
-		for k in files:
-			if k.to_lower().contains(name.to_lower()):
-				key = k
-				break
+		for g in groups:
+			for it in g["items"]:
+				if key == "" and str(it).to_lower().contains(name.to_lower()):
+					key = it
 	if key == "":
 		return "error: no expression " + name
-	var data = JSON.parse_string(FileAccess.get_file_as_string(files[key]))
-	if typeof(data) != TYPE_DICTIONARY:
-		return "error: bad file " + files[key]
-	for p in data.get("Parameters", []):
-		_expr[p["Id"]] = [str(p.get("Blend", "Add")), float(p["Value"])]
-	_expr_name = key
-	return "ok expr " + key
+	for gi in groups.size():
+		if key in groups[gi]["items"]:
+			if _active.get(gi, "") == key:
+				_active.erase(gi)
+			else:
+				_active[gi] = key
+	_rebuild_expr()
+	return "ok expr " + (_expr_name if _expr_name != "" else "off")
 
 func _hold_expression() -> void:
 	if _expr.is_empty():
@@ -202,6 +341,7 @@ func _switch_character(pet: Node, id: String) -> void:
 		return
 	_switching = true
 	_expr.clear()
+	_active.clear()
 	_expr_name = ""
 	var tw := create_tween()
 	tw.tween_property(pet, "modulate:a", 0.0, 0.15)
@@ -338,12 +478,13 @@ func _run(line: String) -> void:
 			_say("ліміт FPS %d" % Engine.max_fps)
 		"list-expr":
 			var m := _model()
-			var out := "емоції:"
-			var names := _expr_files().keys()
-			names.sort()
-			for e in names:
-				out += "\n  " + e + (" *" if e == _expr_name else "")
-			if names.is_empty():
+			var out := "емоції (з різних категорій можна змішувати; * — увімкнена):"
+			var groups := expr_groups()
+			for g in groups:
+				out += "\n  [" + g["name"] + "]"
+				for e in g["items"]:
+					out += "\n    " + e + (" *" if is_expr_active(e) else "")
+			if groups.is_empty():
 				out += " (у цієї моделі немає)"
 			out += "\nанімації:"
 			if m:
@@ -835,6 +976,7 @@ func _key_hint(name: String) -> String:
 func fade_switch(cb: Callable) -> void:
 	var pet := _pet()
 	_expr.clear()
+	_active.clear()
 	_expr_name = ""
 	var tw := create_tween()
 	tw.tween_property(pet, "modulate:a", 0.0, 0.15)

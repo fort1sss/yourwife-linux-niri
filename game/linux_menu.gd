@@ -254,6 +254,13 @@ func _on_main_hover(i: int) -> void:
 			_resize()
 		return
 	_sub_for = i
+	if str(sub.name).begins_with("Linux_expr"):
+		_fill_expr_panel()
+		_sub_panel.visible = true
+		_sub_scroll.scroll_vertical = 0
+		_resize()
+		_resize_later()
+		return
 	if str(sub.name).begins_with("Linux_keys"):
 		_fill_keys()
 		_sub_panel.visible = true
@@ -392,6 +399,50 @@ func _activate(menu: PopupMenu, i: int) -> void:
 		menu.id_pressed.emit(id)
 	if menu.index_pressed.get_connections().size() > 0:
 		menu.index_pressed.emit(i)
+
+# «Емоції»: категорії (заголовок + емоції); у категорії вмикається одна, категорії змішуються.
+# Меню не закривається після кліку — можна одразу комбінувати.
+func _fill_expr_panel() -> void:
+	var keep := _sub_scroll.scroll_vertical
+	_clear(_sub_box)
+	_hover_btn.clear()
+	var reset := Button.new()
+	reset.text = "×  " + lk._t("Скинути всі емоції", "Reset all emotions")
+	reset.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	reset.focus_mode = Control.FOCUS_NONE
+	reset.custom_minimum_size = Vector2(SUB_W - 24, ROW_H)
+	reset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_button(reset, false)
+	reset.add_theme_color_override("font_color", lk.menu_color("dim"))
+	_setup_row(reset, "sub", -1)
+	reset.pressed.connect(func(): lk._set_expression("off"); _fill_expr_panel())
+	_sub_box.add_child(reset)
+	for g in lk.expr_groups():
+		var h := Label.new()
+		h.text = str(g["name"])
+		h.add_theme_font_override("font", lk._noto_font(400))
+		h.add_theme_font_size_override("font_size", FONT_SIZE - 4)
+		h.add_theme_color_override("font_color", lk.menu_color("second"))
+		h.custom_minimum_size.y = 30
+		h.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+		_sub_box.add_child(h)
+		for it in g["items"]:
+			var b := Button.new()
+			var on: bool = lk.is_expr_active(it)
+			b.text = ("●  " if on else "○  ") + str(it)
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.focus_mode = Control.FOCUS_NONE
+			b.clip_text = true
+			b.custom_minimum_size = Vector2(SUB_W - 24, ROW_H)
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			_style_button(b, false)
+			if on:
+				b.add_theme_color_override("font_color", lk.menu_color("hover_text"))
+			_setup_row(b, "sub", -1)
+			b.pressed.connect(func(): lk._set_expression(it); _fill_expr_panel())
+			_sub_box.add_child(b)
+	await get_tree().process_frame
+	_sub_scroll.scroll_vertical = keep
 
 func _resize_later() -> void:
 	await get_tree().process_frame
