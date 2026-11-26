@@ -248,6 +248,10 @@ func _run(line: String) -> void:
 			for m in [pet._context_menu, pet._tray_menu]:
 				o += "%s visible=%s pos=%s DS=%s\n" % [m.name, m.visible, m.position, (DisplayServer.window_get_position(m.get_window_id()) if m.visible else Vector2i(-1, -1))]
 			_say(o)
+		"closemenu":
+			if _menu_win:
+				_menu_win.close()
+			_say("ok closemenu")
 		"settings":
 			pet._show_settings()
 		"workshop":
@@ -567,11 +571,30 @@ func _noto_font(weight: int) -> Font:
 	var w := 700 if weight >= 650 else (500 if weight >= 500 else 400)
 	if _noto.has(w):
 		return _noto[w]
+	# гра йде в контейнері Steam: шрифти хоста там у /run/host/fonts, тож шляхи питаємо в системи.
+	# Основний — Noto Sans (латиниця + повна кирилиця з і/ї/є/ґ), запасний — Noto Sans CJK (китайські/японські імена).
+	var base := _font_from(OS.get_system_font_path("Noto Sans", w))
+	var cjk := _font_from(OS.get_system_font_path("Noto Sans CJK SC", w))
+	if base == null:
+		base = cjk
+		cjk = null
+	if base == null:
+		_noto[w] = ThemeDB.fallback_font
+		return ThemeDB.fallback_font
+	if cjk:
+		base.fallbacks = [cjk]
+	_noto[w] = base
+	return base
+
+func _font_from(path: String) -> FontFile:
+	if path == "":
+		return null
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.size() == 0:
+		return null
 	var ff := FontFile.new()
-	if ff.load_dynamic_font(NOTO[w]) != OK and w != 400:
-		return _noto_font(400)
+	ff.data = bytes
 	ff.allow_system_fallback = false
-	_noto[w] = ff
 	return ff
 
 func _swap_font(f: Font) -> Font:
@@ -695,12 +718,59 @@ func _linux_ui_setup() -> void:
 # Під xwayland-satellite кожне X-вікно гри стоїть у (0,0), а Wine рахує координати миші від того
 # місця, де, на його думку, вікно стоїть. Тож меню й підменю «ставимо» для Wine в (0,0) — тоді
 # кліки й наведення збігаються з картинкою; на екрані їх розміщує niri-pin (біля курсора / праворуч).
+var _menu_win: Window
 func show_native_menu(source: PopupMenu, _point) -> void:
 	_patch_context_menu(source)
+	if _menu_win == null and FileAccess.file_exists("user://linux_menu.gd"):
+		_menu_win = load("user://linux_menu.gd").new()
+		_menu_win.lk = self
+		get_tree().root.add_child(_menu_win)
+	if _menu_win:
+		_menu_win.open_menu(source)
+		return
 	_pin_popups_to_origin(source)
 	if source.visible:
 		source.hide()
 	source.popup(Rect2i(Vector2i.ZERO, Vector2i.ZERO))
+
+# кольори й стилі для меню (linux_menu.gd) за поточною схемою «Вигляд меню»
+var _mstyle_cache := {}
+var _mstyle_key := ""
+func menu_color(what: String) -> Color:
+	var sc := _scheme_colors()
+	var acc: Color = PALETTE[_theme.accent][2]
+	var sec: Color = PALETTE[_theme.second][2]
+	if sc.is_empty():   # світла, як у грі
+		return {"text": Color("#4a3b43"), "hover_text": Color("#c2416f"), "dim": Color("#a3929b"),
+			"second": Color("#b48a9b"), "line": Color("#f0d3dd")}.get(what, Color.WHITE)
+	return {"text": sc.text, "hover_text": acc.lightened(0.35), "dim": sc.dim,
+		"second": sec, "line": sec.darkened(0.35)}.get(what, Color.WHITE)
+
+func menu_box(what: String) -> StyleBox:
+	var key := "%s|%d|%d" % [_theme.scheme, _theme.accent, _theme.second]
+	if key != _mstyle_key:
+		_mstyle_cache.clear()
+		_mstyle_key = key
+	if _mstyle_cache.has(what):
+		return _mstyle_cache[what]
+	var sc := _scheme_colors()
+	var acc: Color = PALETTE[_theme.accent][2]
+	var sb: StyleBox
+	match what:
+		"panel":
+			if sc.is_empty():
+				sb = _box(Color("#fffafc"), 16, Color("#f3c7d6"))
+			else:
+				sb = _box(sc.bg, 16, acc.darkened(0.55))
+			sb.content_margin_left = 10; sb.content_margin_right = 10
+			sb.content_margin_top = 10; sb.content_margin_bottom = 10
+		"hover":
+			var h := Color("#ffdce8") if sc.is_empty() else Color(acc.r, acc.g, acc.b, 0.28)
+			sb = _box(h, 10)
+		_:
+			sb = _box(Color(0, 0, 0, 0), 10)
+	_mstyle_cache[what] = sb
+	return sb
 
 func _pin_popups_to_origin(m: PopupMenu) -> void:
 	if not m.has_meta("lk_origin"):

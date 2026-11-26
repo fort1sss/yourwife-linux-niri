@@ -162,6 +162,25 @@ def size_watcher():
     threading.Thread(target=loop, daemon=True).start()
 
 
+CURSOR_FILE = os.path.join(os.path.dirname(SIZE_FILE), "linux_cursor.txt")
+_last_cursor = [None, 0.0]
+
+
+def write_cursor(cx, cy, sw, sh):
+    """Позиція курсора й розмір екрана для меню гри (щоб воно завжди відкривалось в межах екрана)."""
+    v = (int(cx), int(cy), int(sw), int(sh))
+    now = time.monotonic()
+    if v == _last_cursor[0] or now - _last_cursor[1] < 0.05:
+        return
+    _last_cursor[0], _last_cursor[1] = v, now
+    try:
+        with open(CURSOR_FILE + ".tmp", "w") as f:
+            f.write("%d %d %d %d\n" % v)
+        os.replace(CURSOR_FILE + ".tmp", CURSOR_FILE)
+    except OSError:
+        pass
+
+
 def fit(x, y, w, h, sw, sh):
     """Для гри її вікно стоїть у (0,0), а курсор не може вийти за межі екрана (0..sw, 0..sh).
     Точку поза цими межами зсуваємо до краю вздовж променя від голови — напрям погляду точний."""
@@ -234,6 +253,11 @@ def main():
     X.XDefaultRootWindow.restype = C.c_ulong
     sw = X.XDisplayWidth(C.c_void_p(d), 0) or 1920
     sh = X.XDisplayHeight(C.c_void_p(d), 0) or 1080
+    try:
+        _o = next(iter(niri("Outputs")["Outputs"].values()))["logical"]
+        sw_out, sh_out = _o["width"], _o["height"]
+    except Exception:
+        sw_out, sh_out = 1920, 1080
     xwin, xwin_size, was_over = None, None, None
     menu_open = False
     global _game_for_size
@@ -262,6 +286,7 @@ def main():
             continue
         _game_for_size = game
         cx, cy = niri("CursorPosition")["CursorPosition"]
+        write_cursor(cx, cy, sw_out, sh_out)
         g = rect(game)
         if g and (xwin is None or xwin_size != (g[2], g[3])):
             xwin, xwin_size = x_game_window(d, g[2], g[3]), (g[2], g[3])
