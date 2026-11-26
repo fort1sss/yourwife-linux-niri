@@ -47,7 +47,9 @@ func _ready() -> void:
 	_bg = Control.new()
 	_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_bg.mouse_filter = Control.MOUSE_FILTER_STOP
-	_bg.gui_input.connect(func(e): if e is InputEventMouseButton and e.pressed: close())
+	# закривати лише справжнім кліком по прозорій частині; колесо миші (теж MouseButton) — ні,
+	# інакше прокрутка списку до кінця «просочувалась» на тло й закривала меню
+	_bg.gui_input.connect(func(e): if e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]: close())
 	add_child(_bg)
 	_main_panel = PanelContainer.new()
 	_main_box = VBoxContainer.new()
