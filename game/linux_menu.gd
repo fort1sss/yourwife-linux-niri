@@ -28,6 +28,7 @@ var _opened_ms := 0
 const ROW_H := 38
 const FONT_SIZE := 19
 const MAIN_W := 400
+var _main_w := MAIN_W           # ширина головного меню — за найдовшим пунктом
 const SUB_W := 430
 
 func _init() -> void:
@@ -66,6 +67,8 @@ func _ready() -> void:
 
 func _on_window_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
+		if lk._capture_cb.is_valid() and window_input.is_connected(lk._capture_cb):
+			return
 		close()
 
 func _on_focus_lost() -> void:
@@ -99,6 +102,13 @@ func _clear(box: VBoxContainer) -> void:
 
 func _fill(box: VBoxContainer, menu: PopupMenu, is_main: bool) -> void:
 	_clear(box)
+	if is_main:
+		var f: Font = lk._noto_font(400)
+		var mw := 0.0
+		for j in menu.item_count:
+			if not menu.is_item_separator(j):
+				mw = maxf(mw, f.get_string_size(menu.get_item_text(j), HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x)
+		_main_w = clampi(int(mw) + 80, MAIN_W, 760)
 	for i in menu.item_count:
 		if menu.is_item_separator(i):
 			var txt := menu.get_item_text(i)
@@ -125,7 +135,7 @@ func _fill(box: VBoxContainer, menu: PopupMenu, is_main: bool) -> void:
 		b.flat = false
 		b.focus_mode = Control.FOCUS_NONE
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.custom_minimum_size = Vector2((MAIN_W if is_main else SUB_W) - 24, ROW_H)
+		b.custom_minimum_size = Vector2((_main_w if is_main else SUB_W) - 24, ROW_H)
 		b.clip_text = true
 		var mark := ""
 		if menu.is_item_checkable(i) or menu.is_item_radio_checkable(i):
@@ -190,11 +200,19 @@ func _on_main_hover(i: int) -> void:
 			_resize()
 		return
 	_sub_for = i
+	if str(sub.name).begins_with("Linux_keys"):
+		_fill_keys()
+		_sub_panel.visible = true
+		_sub_scroll.scroll_vertical = 0
+		_resize()
+		_resize_later()
+		return
 	if str(sub.name).begins_with("Linux_size"):
 		_fill_size_slider()
 		_sub_panel.visible = true
 		_sub_scroll.scroll_vertical = 0
 		_resize()
+		_resize_later()
 		return
 	# підменю живе: перед показом гра/наш скрипт можуть оновити галочки — повідомляємо, як рідному меню
 	sub.about_to_popup.emit()
@@ -202,6 +220,7 @@ func _on_main_hover(i: int) -> void:
 	_sub_panel.visible = true
 	_sub_scroll.scroll_vertical = 0
 	_resize()
+	_resize_later()
 	_highlight_main(i)
 
 # «Розмір»: повзунок 55-450% з кроком 1%, героїня змінюється, поки тягнеш (з невеликою паузою,
@@ -304,12 +323,53 @@ func _highlight_main(i: int) -> void:
 func _activate(menu: PopupMenu, i: int) -> void:
 	var id := menu.get_item_id(i)
 	close()
+	if menu == _source and id == 10:
+		lk.toggle_hide()
+		return
+	if menu == _source and id == 3:
+		lk.toggle_lock()
+		return
 	if menu.is_item_checkable(i) and not menu.is_item_radio_checkable(i):
 		pass  # стан галочки оновлює сама гра у своєму обробнику
+	if str(menu.name) == "CharacterMenu":
+		lk.fade_switch(func(): menu.id_pressed.emit(id))
+		return
 	if menu.id_pressed.get_connections().size() > 0:
 		menu.id_pressed.emit(id)
 	if menu.index_pressed.get_connections().size() > 0:
 		menu.index_pressed.emit(i)
+
+func _resize_later() -> void:
+	await get_tree().process_frame
+	if visible:
+		_resize()
+
+# «Гарячі клавіші»: поля для зміни клавіш (клік → натисни комбінацію; Esc — скасувати, Backspace — прибрати)
+func _fill_keys() -> void:
+	_clear(_sub_box)
+	for k in ["hide", "menu"]:
+		var l := Label.new()
+		l.text = lk._t("Приховати/Показати персонажа", "Hide/Show character") if k == "hide" else lk._t("Відкрити меню", "Open menu")
+		l.add_theme_font_override("font", lk._noto_font(400))
+		l.add_theme_font_size_override("font_size", FONT_SIZE - 2)
+		l.add_theme_color_override("font_color", lk.menu_color("second"))
+		l.custom_minimum_size.y = 28
+		_sub_box.add_child(l)
+		var b := Button.new()
+		b.text = lk.pretty_key(lk.get_hotkey(k))
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(SUB_W - 24, ROW_H)
+		_style_button(b, false)
+		b.add_theme_stylebox_override("normal", lk.menu_box("hover"))
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.pressed.connect(func(): lk._capture_key(self, k, b))
+		_sub_box.add_child(b)
+	var hint := Label.new()
+	hint.text = lk._t("Клік по полю → натисни комбінацію.\nEsc — скасувати, Backspace — прибрати.", "Click a field, then press a combination.\nEsc cancels, Backspace clears.")
+	hint.add_theme_font_override("font", lk._noto_font(400))
+	hint.add_theme_font_size_override("font_size", FONT_SIZE - 6)
+	hint.add_theme_color_override("font_color", lk.menu_color("dim"))
+	_sub_box.add_child(hint)
 
 func _read_cursor() -> Array:
 	var p := FileAccess.get_file_as_string("user://linux_cursor.txt").split(" ", false)
@@ -323,18 +383,18 @@ func _place() -> void:
 	var cx: int = c[0]
 	var cy: int = c[1]
 	_scr = Vector2i(c[2], c[3])
-	var total := MAIN_W + 6 + SUB_W
+	var total := _main_w + 6 + SUB_W
 	_left = cx + total > _scr.x
 	var wx: int
 	if _left:
 		_main_x = SUB_W + 6
 		_sub_x = 0
 		wx = cx - _main_x
-		if cx + MAIN_W > _scr.x:
+		if cx + _main_w > _scr.x:
 			wx = _scr.x - total
 	else:
 		_main_x = 0
-		_sub_x = MAIN_W + 6
+		_sub_x = _main_w + 6
 		wx = cx
 	wx = clampi(wx, 0, maxi(_scr.x - total, 0))
 	var main_h := int(_main_box.get_combined_minimum_size().y) + 20
@@ -355,9 +415,9 @@ func _resize() -> void:
 		_sub_panel.size = Vector2(SUB_W, sh)
 		h = maxf(h, sh)
 	_main_panel.position = Vector2(_main_x, 0)
-	_main_panel.size = Vector2(MAIN_W, main_h)
+	_main_panel.size = Vector2(_main_w, main_h)
 	_sub_panel.position = Vector2(_sub_x, 0)
-	size = Vector2i(MAIN_W + 6 + SUB_W, int(h))
+	size = Vector2i(_main_w + 6 + SUB_W, int(h))
 
 # ───────────── вигляд ─────────────
 func _apply_style() -> void:

@@ -252,6 +252,41 @@ func _run(line: String) -> void:
 			if _menu_win and _menu_win.visible:
 				_menu_win._on_main_hover(arg.to_int())
 			_say("ok menuhover")
+		"probe":
+			var o := ""
+			var sc0: float = pet._character_scale
+			var ws0 := DisplayServer.window_get_size()
+			pet._resize_character(4.5)
+			o += "requested 4.5 -> scale %.3f, win %s (was %.3f %s)\n" % [pet._character_scale, DisplayServer.window_get_size(), sc0, ws0]
+			pet._resize_character(sc0)
+			pet._save_preferences()
+			for w in _all_windows(get_tree().root):
+				o += "window '%s' visible=%s size=%s min=%s content_scale=%s\n" % [w.title, w.visible, w.size, w.min_size, w.content_scale_size]
+			o += "screen %s usable %s\n" % [DisplayServer.screen_get_size(), DisplayServer.screen_get_usable_rect()]
+			_say(o)
+		"togglehide":
+			toggle_hide()
+			_say("ok togglehide")
+		"togglelock":
+			toggle_lock()
+			_say("ok lock=%s" % _locked)
+		"audit":
+			var o := ""
+			var todo := [pet._context_menu]
+			while todo.size() > 0:
+				var m: PopupMenu = todo.pop_front()
+				var ids := []
+				for c in m.id_pressed.get_connections():
+					ids.append(str(c.callable.get_method()))
+				var idx := []
+				for c in m.index_pressed.get_connections():
+					idx.append(str(c.callable.get_method()))
+				o += "%s: items=%d id_pressed=%s index_pressed=%s\n" % [m.name, m.item_count, str(ids), str(idx)]
+				for i in m.item_count:
+					var sub := m.get_item_submenu_node(i)
+					if sub:
+						todo.append(sub)
+			_say(o)
 		"closemenu":
 			if _menu_win:
 				_menu_win.close()
@@ -711,6 +746,10 @@ func _linux_ui_setup() -> void:
 		t.toggled.disconnect(c.callable)
 	t.toggled.connect(_on_linux_autostart)
 	pet._settings_window.visibility_changed.connect(_patch_settings)
+	_load_keys()
+	_locked = FileAccess.file_exists("user://linux_lock")
+	_apply_lock()
+	get_tree().root.window_input.connect(_on_root_click)
 	_patch_settings()
 	_restyle_all()
 
@@ -723,6 +762,112 @@ func _linux_ui_setup() -> void:
 # місця, де, на його думку, вікно стоїть. Тож меню й підменю «ставимо» для Wine в (0,0) — тоді
 # кліки й наведення збігаються з картинкою; на екрані їх розміщує niri-pin (біля курсора / праворуч).
 var _menu_win: Window
+var _keys_menu: PopupMenu
+
+# ───────────── приховати/показати, блокування, гарячі клавіші ─────────────
+# Гарячі клавіші живуть у niri: гра пише їх у user://linux_keys.json, служба yw-gaze перебудовує
+# ~/.config/niri/yourwife-keys.kdl (і перевіряє niri validate). Формат — як у niri: "Mod+Ctrl+Y".
+var _keys := {"hide": "Mod+Ctrl+Y", "menu": ""}
+var _locked := false
+const KEYS_FILE := "user://linux_keys.json"
+
+func _load_keys() -> void:
+	if FileAccess.file_exists(KEYS_FILE):
+		var d = JSON.parse_string(FileAccess.get_file_as_string(KEYS_FILE))
+		if typeof(d) == TYPE_DICTIONARY:
+			for k in d:
+				_keys[k] = str(d[k])
+	else:
+		_save_keys()
+
+func _save_keys() -> void:
+	var f := FileAccess.open(KEYS_FILE, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(_keys))
+		f.close()
+
+func get_hotkey(name: String) -> String:
+	return str(_keys.get(name, ""))
+
+func set_hotkey(name: String, combo: String) -> void:
+	_keys[name] = combo
+	_save_keys()
+	var pet := _pet()
+	if pet:
+		for m in [pet._context_menu, pet.get("_tray_menu")]:
+			if m:
+				_patch_context_menu(m)
+	_patch_settings()
+
+func pretty_key(combo: String) -> String:
+	if combo == "":
+		return _t("не задано", "not set")
+	return combo.replace("+", " + ")
+
+func _key_hint(name: String) -> String:
+	var k := get_hotkey(name)
+	return "" if k == "" else "  [" + pretty_key(k) + "]"
+
+# вибір персонажа з меню: стара модель плавно зникає, далі гра вантажить нову, нова плавно з'являється
+func fade_switch(cb: Callable) -> void:
+	var pet := _pet()
+	_expr.clear()
+	_expr_name = ""
+	var tw := create_tween()
+	tw.tween_property(pet, "modulate:a", 0.0, 0.15)
+	await tw.finished
+	await get_tree().process_frame
+	await get_tree().process_frame
+	cb.call()
+	await get_tree().process_frame
+	var tw2 := create_tween()
+	tw2.tween_property(pet, "modulate:a", 0.85 if _locked else 1.0, 0.25)
+
+func toggle_hide() -> void:
+	var pet := _pet()
+	if bool(pet._character_hidden):
+		pet._character_hidden = false
+		pet._apply_character_visibility()
+	else:
+		pet._on_menu_item_pressed(10)   # логіка гри «Приховати персонажа»
+	pet._save_preferences()
+
+# Блокування на Linux: справжній «клік крізь вікно» під XWayland не працює, тож заблокована героїня
+# просто не реагує на мишку (перетягування, колесо, правий клік); подвійний клік її розблоковує.
+func toggle_lock() -> void:
+	_locked = not _locked
+	if _locked:
+		var f := FileAccess.open("user://linux_lock", FileAccess.WRITE)
+		if f:
+			f.store_string("1")
+			f.close()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path("user://linux_lock"))
+	_apply_lock()
+
+func is_locked() -> bool:
+	return _locked
+
+func _apply_lock() -> void:
+	var pet := _pet()
+	if pet == null:
+		return
+	pet.set_process_input(not _locked)
+	pet.set_process_unhandled_input(not _locked)
+	pet.modulate.a = 0.85 if _locked else 1.0
+
+var _last_click_ms := 0
+var _last_click_pos := Vector2(-999, -999)
+func _on_root_click(e: InputEvent) -> void:
+	if not (e is InputEventMouseButton) or e.button_index != MOUSE_BUTTON_LEFT or not e.pressed:
+		return
+	var now := Time.get_ticks_msec()
+	if now - _last_click_ms < 380 and e.position.distance_to(_last_click_pos) < 8:
+		_last_click_ms = 0
+		toggle_lock()
+	else:
+		_last_click_ms = now
+		_last_click_pos = e.position
 func show_native_menu(source: PopupMenu, _point) -> void:
 	_patch_context_menu(source)
 	if _menu_win == null and FileAccess.file_exists("user://linux_menu.gd"):
@@ -900,7 +1045,7 @@ func _use_set(cm: PopupMenu) -> void:
 	var k := cm.get_instance_id()
 	if not _sets.has(k):
 		var st := {}
-		for nm in ["size", "expr", "view", "theme"]:
+		for nm in ["size", "expr", "view", "theme", "keys"]:
 			var m := PopupMenu.new()
 			m.name = "Linux_" + nm
 			cm.add_child(m)
@@ -918,11 +1063,19 @@ func _use_set(cm: PopupMenu) -> void:
 	var cur: Dictionary = _sets[k]
 	_size_menu = cur.size; _expr_menu = cur.expr; _view_menu = cur.view
 	_theme_menu = cur.theme; _accent_menu = cur.accent; _second_menu = cur.second
+	_keys_menu = cur["keys"]
 
 func _patch_context_menu(cm: PopupMenu) -> void:
 	_use_set(cm)
 	_strip_wallpaper(cm)
-	for id in [9101, 9102, 9103, 9104]:
+	var ih := cm.get_item_index(10)
+	if ih >= 0:
+		cm.set_item_text(ih, _t("Приховати/Показати персонажа", "Hide/Show character") + _key_hint("hide"))
+	var il := cm.get_item_index(3)
+	if il >= 0:
+		cm.set_item_text(il, _t("Заблокувати/Розблокувати персонажа [Подвійний клік по персонажу]",
+			"Lock/Unlock character [Double-click the character]"))
+	for id in [9101, 9102, 9103, 9104, 9105]:
 		var i := cm.get_item_index(id)
 		while i >= 0:
 			cm.remove_item(i)
@@ -944,6 +1097,11 @@ func _patch_context_menu(cm: PopupMenu) -> void:
 	_fill_theme_menu()
 	cm.add_submenu_node_item(_t("Вигляд меню", "Menu style"), _theme_menu, 9104)
 	cm.set_item_index(cm.get_item_index(9104), pos)
+	pos += 1
+	_keys_menu.clear()
+	_keys_menu.add_item("keys", 0)          # вміст малює linux_menu.gd (поля для зміни клавіш)
+	cm.add_submenu_node_item(_t("Гарячі клавіші", "Hotkeys"), _keys_menu, 9105)
+	cm.set_item_index(cm.get_item_index(9105), pos)
 
 func _fill_size_menu() -> void:
 	_size_menu.clear()
@@ -1042,8 +1200,105 @@ func _patch_settings() -> void:
 		pet._autostart_label.text = _t("Запускати разом із системою", "Start with the system")
 	if pet._autostart_toggle:
 		pet._autostart_toggle.set_pressed_no_signal(FileAccess.file_exists(AUTOSTART_FLAG))
+	_settings_fit(pet)
 	if pet._settings_window.visible:
 		_style_settings(pet._settings_window)
+
+# Вікно налаштувань: заголовок переносимо (інакше довгий рядок розпирає вікно і все обрізається),
+# додаємо рядки гарячих клавіш, а висоту підганяємо під вміст.
+var _key_rows := {}
+func _settings_fit(pet: Node) -> void:
+	var w: Window = pet._settings_window
+	if w == null:
+		return
+	var heading = pet.get("_settings_heading")
+	if heading is Label:
+		heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		heading.custom_minimum_size.x = 1
+		heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var anchor: Control = pet._autostart_label.get_parent() if pet._autostart_label else null
+	if anchor and _key_rows.is_empty():
+		var box := anchor.get_parent()
+		var at := anchor.get_index() + 1
+		for k in ["menu", "hide"]:
+			var sep := HSeparator.new()
+			box.add_child(sep)
+			box.move_child(sep, at)
+			at += 1
+			var row := HBoxContainer.new()
+			var lbl := Label.new()
+			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			lbl.add_theme_font_override("font", pet._autostart_label.get_theme_font("font"))
+			lbl.add_theme_font_size_override("font_size", pet._autostart_label.get_theme_font_size("font_size"))
+			var btn := Button.new()
+			btn.custom_minimum_size = Vector2(190, 40)
+			btn.pressed.connect(_capture_key.bind(w, k, btn))
+			row.add_child(lbl)
+			row.add_child(btn)
+			box.add_child(row)
+			box.move_child(row, at)
+			at += 1
+			_key_rows[k] = [lbl, btn]
+	for k in _key_rows:
+		var lbl: Label = _key_rows[k][0]
+		var btn: Button = _key_rows[k][1]
+		lbl.text = _t("Відкрити меню клавішами", "Open menu with keys") if k == "menu" else _t("Приховати/Показати персонажа", "Hide/Show character")
+		btn.text = pretty_key(get_hotkey(k))
+	if w.visible:
+		_fit_window.call_deferred(w)
+
+func _fit_window(w: Window) -> void:
+	await get_tree().process_frame
+	var need := Vector2i(w.get_contents_minimum_size())
+	var target := Vector2i(maxi(720, need.x), maxi(need.y, 300))
+	if w.min_size.y > target.y:
+		w.min_size = Vector2i(w.min_size.x, target.y)
+	if w.size != target:
+		w.size = target
+	report_window_size(w)
+
+# Вікна гри, крім головного: бажаний розмір пишемо у файл, yw-gaze виставляє його через niri
+# (сама гра змінити розмір свого вікна під XWayland не може).
+func report_window_size(w: Window) -> void:
+	var f := FileAccess.open("user://linux_winsize_" + str(w.title.hash()) + ".txt", FileAccess.WRITE)
+	if f:
+		f.store_string("%d %d %s\n" % [w.size.x, w.size.y, w.title])
+		f.close()
+
+# Захоплення комбінації: наступне натискання з модифікаторами у вікні w стає гарячою клавішею.
+# Esc — скасувати, Backspace/Delete — прибрати клавішу.
+var _capture_cb: Callable
+func _capture_key(w: Window, name: String, btn: Button) -> void:
+	btn.text = _t("Натисніть комбінацію…", "Press a combination…")
+	if _capture_cb.is_valid() and w.window_input.is_connected(_capture_cb):
+		w.window_input.disconnect(_capture_cb)
+	_capture_cb = func(e: InputEvent):
+		if not (e is InputEventKey) or not e.pressed or e.echo:
+			return
+		if e.keycode in [KEY_CTRL, KEY_SHIFT, KEY_ALT, KEY_META]:
+			return
+		w.window_input.disconnect(_capture_cb)
+		w.set_input_as_handled()
+		if e.keycode == KEY_ESCAPE:
+			btn.text = pretty_key(get_hotkey(name))
+			return
+		if e.keycode in [KEY_BACKSPACE, KEY_DELETE]:
+			set_hotkey(name, "")
+			btn.text = pretty_key("")
+			return
+		var parts := []
+		if e.meta_pressed: parts.append("Mod")
+		if e.ctrl_pressed: parts.append("Ctrl")
+		if e.alt_pressed: parts.append("Alt")
+		if e.shift_pressed: parts.append("Shift")
+		var kn := OS.get_keycode_string(e.keycode)
+		if kn == "":
+			kn = OS.get_keycode_string(e.physical_keycode)
+		parts.append(kn)
+		var combo := "+".join(parts)
+		set_hotkey(name, combo)
+		btn.text = pretty_key(combo)
+	w.window_input.connect(_capture_cb)
 
 func _on_linux_autostart(on: bool) -> void:
 	if on:
@@ -1246,6 +1501,14 @@ func _all_controls(n: Node) -> Array:
 		if c is Control:
 			r.append(c)
 		r.append_array(_all_controls(c))
+	return r
+
+func _all_windows(n: Node) -> Array:
+	var r := []
+	for c in n.get_children():
+		if c is Window:
+			r.append(c)
+		r.append_array(_all_windows(c))
 	return r
 
 func _count_windows(n: Node) -> int:

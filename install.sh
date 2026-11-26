@@ -9,6 +9,8 @@ install -Dm755 bin/niri-pin  ~/.local/bin/niri-pin
 install -Dm644 niri/magenta-key.frag ~/.config/niri/shaders/magenta-key.frag
 install -Dm644 niri/yourwife.kdl        ~/.config/niri/yourwife.kdl
 grep -q 'include "yourwife.kdl"' ~/.config/niri/config.kdl || printf '\ninclude "yourwife.kdl"\n' >> ~/.config/niri/config.kdl
+[ -e ~/.config/niri/yourwife-keys.kdl ] || printf 'binds {\n    Mod+Ctrl+Y { spawn "%s" "togglehide"; }\n}\n' "$HOME/.local/bin/yourwife" > ~/.config/niri/yourwife-keys.kdl
+grep -q 'include "yourwife-keys.kdl"' ~/.config/niri/config.kdl || printf '\ninclude "yourwife-keys.kdl"\n' >> ~/.config/niri/config.kdl
 GAME="${STEAM_LIBRARY:-$HOME/.local/share/Steam}/steamapps/common/YourWife"
 USERDATA="${STEAM_LIBRARY:-$HOME/.local/share/Steam}/steamapps/compatdata/3339420/pfx/drive_c/users/steamuser/AppData/Roaming/Godot/app_userdata/你的老婆"
 install -Dm644 game/linux_key.gd "$USERDATA/linux_key.gd"; echo "linux_key.gd -> $USERDATA"

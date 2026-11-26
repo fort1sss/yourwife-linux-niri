@@ -146,6 +146,65 @@ def apply_size():
         write_actual(*cur["layout"]["window_size"])
 
 
+KEYS_FILE = os.path.join(os.path.dirname(SIZE_FILE), "linux_keys.json")
+KEYS_KDL = os.path.expanduser("~/.config/niri/yourwife-keys.kdl")
+
+
+def apply_keys():
+    """Гарячі клавіші, вибрані в грі (linux_keys.json) -> ~/.config/niri/yourwife-keys.kdl.
+    Якщо niri не приймає комбінацію — повертаємо попередній файл."""
+    try:
+        keys = json.load(open(KEYS_FILE))
+    except (OSError, ValueError):
+        return
+    yw = os.path.expanduser("~/.local/bin/yourwife")
+    lines = ["// Згенеровано yw-gaze з налаштувань Your Wife (linux_keys.json). Не редагуй вручну.", "binds {"]
+    acts = {"hide": ("Your Wife: приховати/показати", "togglehide"), "menu": ("Your Wife: меню", "menu")}
+    for k, (title, cmd) in acts.items():
+        combo = str(keys.get(k, "")).strip()
+        if combo:
+            lines.append(f'    {combo} hotkey-overlay-title="{title}" {{ spawn "{yw}" "{cmd}"; }}')
+    lines.append("}")
+    new = "\n".join(lines) + "\n"
+    old = open(KEYS_KDL).read() if os.path.exists(KEYS_KDL) else None
+    if new == old:
+        return
+    with open(KEYS_KDL, "w") as f:
+        f.write(new)
+    r = subprocess.run(["niri", "validate"], capture_output=True, text=True)
+    if r.returncode != 0 and old is not None:
+        with open(KEYS_KDL, "w") as f:
+            f.write(old)
+
+
+def apply_window_size(fname):
+    """Інші вікна гри (налаштування тощо): бажаний розмір із linux_winsize_<hash>.txt -> niri."""
+    try:
+        parts = open(os.path.join(os.path.dirname(SIZE_FILE), fname)).read().split(" ", 2)
+        w, h, title = int(parts[0]), int(parts[1]), parts[2].strip()
+    except (OSError, ValueError, IndexError):
+        return
+    try:
+        win = next((x for x in niri("Windows")["Windows"] if x["app_id"] == APP and x["title"] == title), None)
+    except Exception:
+        return
+    if not win or tuple(win["layout"]["window_size"]) == (w, h):
+        return
+    s = socket.socket(socket.AF_UNIX)
+    try:
+        s.connect(os.environ["NIRI_SOCKET"])
+        reqs = [{"Action": {"SetWindowWidth": {"id": win["id"], "change": {"SetFixed": w}}}},
+                {"Action": {"SetWindowHeight": {"id": win["id"], "change": {"SetFixed": h}}}}]
+        s.sendall(("\n".join(json.dumps(r) for r in reqs) + "\n").encode())
+        s.settimeout(0.5)
+        try:
+            s.recv(4096)
+        except OSError:
+            pass
+    finally:
+        s.close()
+
+
 def size_watcher():
     """Окремий потік: inotify на теку гри — реагуємо на запис linux_winsize.txt одразу."""
     import threading
@@ -155,10 +214,19 @@ def size_watcher():
     name = os.path.basename(SIZE_FILE).encode()
 
     def loop():
+        apply_keys()
         while True:
             buf = os.read(fd, 4096)
             if name in buf:
                 apply_size()
+            if b"linux_keys.json" in buf:
+                apply_keys()
+            for part in buf.split(b"\0"):
+                i = part.find(b"linux_winsize_")
+                if i >= 0:
+                    fn = part[i:].split(b"\0")[0].decode(errors="ignore")
+                    if fn.endswith(".txt"):
+                        apply_window_size(fn)
     threading.Thread(target=loop, daemon=True).start()
 
 
