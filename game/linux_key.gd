@@ -447,10 +447,13 @@ func _run(line: String) -> void:
 			_say("ok closemenu")
 		"settings":
 			pet._show_settings()
+			_hook_themed_windows()
 		"workshop":
 			pet._show_workshop()
+			_hook_themed_windows()
 		"help":
 			pet._show_help()
+			_hook_themed_windows()
 		"expr":
 			_say(_set_expression(arg))
 		"motion":
@@ -901,6 +904,8 @@ func _linux_ui_setup() -> void:
 		t.toggled.disconnect(c.callable)
 	t.toggled.connect(_on_linux_autostart)
 	pet._settings_window.visibility_changed.connect(_patch_settings)
+	_hook_themed_windows.call_deferred()
+	get_tree().node_added.connect(_on_node_added_theme)
 	_load_keys()
 	_locked = FileAccess.file_exists("user://linux_lock")
 	_apply_lock()
@@ -1626,11 +1631,51 @@ func _style_controls(n: Node, sc: Dictionary, acc: Color, sec: Color) -> void:
 				c.remove_theme_stylebox_override("panel")
 			else:
 				c.add_theme_stylebox_override("panel", _box(sc.panel, 14))
+		elif c is Panel:
+			if sc.is_empty():
+				c.remove_theme_stylebox_override("panel")
+			else:
+				c.add_theme_stylebox_override("panel", _box(sc.panel, 14))
 		elif c is Label:
 			if sc.is_empty():
 				c.remove_theme_color_override("font_color")
 			else:
-				c.add_theme_color_override("font_color", sec if c.name == "SettingsEyebrow" else sc.text)
+				c.add_theme_color_override("font_color", sec if c.name == "SettingsEyebrow" or str(c.text).begins_with("♥") else sc.text)
+		elif c is RichTextLabel:
+			if sc.is_empty():
+				c.remove_theme_color_override("default_color")
+			else:
+				c.add_theme_color_override("default_color", sc.text)
+		elif c is LineEdit or c is TextEdit:
+			if sc.is_empty():
+				for st in ["normal", "focus", "read_only"]:
+					c.remove_theme_stylebox_override(st)
+				for k in ["font_color", "font_placeholder_color"]:
+					c.remove_theme_color_override(k)
+			else:
+				c.add_theme_stylebox_override("normal", _box(sc.panel.lightened(0.06), 10, acc.darkened(0.4)))
+				c.add_theme_stylebox_override("focus", _box(sc.panel.lightened(0.06), 10, acc))
+				c.add_theme_stylebox_override("read_only", _box(sc.panel, 10))
+				c.add_theme_color_override("font_color", sc.text)
+				c.add_theme_color_override("font_placeholder_color", sc.dim)
+		elif c is ItemList:
+			if sc.is_empty():
+				c.remove_theme_stylebox_override("panel")
+				c.remove_theme_color_override("font_color")
+			else:
+				c.add_theme_stylebox_override("panel", _box(sc.panel, 12))
+				c.add_theme_color_override("font_color", sc.text)
+		elif c is TabBar or c is TabContainer:
+			for k in ["font_selected_color", "font_unselected_color", "font_hovered_color"]:
+				if sc.is_empty():
+					c.remove_theme_color_override(k)
+				else:
+					c.add_theme_color_override(k, acc.lightened(0.3) if k == "font_selected_color" else sc.text)
+			if c is TabContainer:
+				if sc.is_empty():
+					c.remove_theme_stylebox_override("panel")
+				else:
+					c.add_theme_stylebox_override("panel", _box(sc.bg, 12))
 		elif c is Button:
 			for k in ["font_color", "font_hover_color", "font_pressed_color"]:
 				if sc.is_empty():
@@ -1650,10 +1695,68 @@ func _style_controls(n: Node, sc: Dictionary, acc: Color, sec: Color) -> void:
 				c.add_theme_stylebox_override("pressed", _box(h, 10, acc))
 		_style_controls(c, sc, acc, sec)
 
+# вікна гри, що беруть тему меню: налаштування, довідка, Майстерня, завантаження, підтвердження
+func _themed_windows() -> Array:
+	var pet := _pet()
+	var out := []
+	if pet == null:
+		return out
+	for w in _all_windows(pet):
+		if w is FileDialog or w is PopupMenu or w == _menu_win or str(w.title) == "":
+			continue
+		out.append(w)
+	return out
+
+var _themed_hooked := {}
+var _restyle_pending := {}
+func _hook_themed_windows() -> void:
+	for w in _themed_windows():
+		var k: int = w.get_instance_id()
+		if _themed_hooked.has(k):
+			continue
+		_themed_hooked[k] = true
+		w.visibility_changed.connect(func(): if w.visible: _queue_restyle(w); _report_later(w))
+		if w.visible:
+			_queue_restyle(w)
+			_report_later(w)
+
+# Майстерня довантажує картки поступово — перефарбовуємо нові елементи (не частіше раза на кадр)
+func _on_node_added_theme(n: Node) -> void:
+	if not (n is Control):
+		return
+	var w: Window = n.get_window()
+	if w and _themed_hooked.has(w.get_instance_id()) and w.visible:
+		_queue_restyle(w)
+
+# розмір вікна, який хоче гра (Майстерня 1200x720 тощо), — у файл, yw-gaze виставляє його через niri
+func _report_later(w: Window) -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if is_instance_valid(w) and w.visible:
+		var need := Vector2i(w.get_contents_minimum_size())
+		w.size = Vector2i(maxi(w.size.x, need.x), maxi(w.size.y, need.y))
+		report_window_size(w)
+
+func _queue_restyle(w: Window) -> void:
+	var k: int = w.get_instance_id()
+	if _restyle_pending.has(k):
+		return
+	_restyle_pending[k] = true
+	_do_restyle.call_deferred(w)
+
+func _do_restyle(w: Window) -> void:
+	_restyle_pending.erase(w.get_instance_id())
+	if is_instance_valid(w):
+		_style_settings(w)
+		_style_tree_popups(w)
+
 func _restyle_all() -> void:
 	var pet := _pet()
 	if pet == null:
 		return
+	for w in _themed_windows():
+		if w.visible:
+			_queue_restyle(w)
 	_style_tree_popups(pet._context_menu)
 	_style_menu_window()
 	if pet.get("_tray_menu"):
