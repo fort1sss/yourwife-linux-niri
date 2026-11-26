@@ -18,6 +18,12 @@ PFX="${STEAM_LIBRARY:-$HOME/.local/share/Steam}/steamapps/compatdata/3339420/pfx
 WINE=$(ls -d "${STEAM_LIBRARY:-$HOME/.local/share/Steam}"/steamapps/common/Proton*/files/bin/wine 2>/dev/null | tail -1)
 if [ -n "$WINE" ] && [ -d "$PFX" ]; then
     WINEPREFIX="$PFX" WINEDEBUG=-all "$WINE" reg add 'HKCU\Software\Wine\X11 Driver' /v ScreenDepth /t REG_SZ /d 32 /f
+    # the game's UI asks for "Microsoft YaHei UI"; without it every SystemFont lookup under Wine is slow
+    if fc-list | grep -q NotoSansCJK; then
+        for f in "Microsoft YaHei UI" "Microsoft YaHei"; do
+            WINEPREFIX="$PFX" WINEDEBUG=-all "$WINE" reg add 'HKCU\Software\Wine\Fonts\Replacements' /v "$f" /t REG_SZ /d "Noto Sans CJK SC" /f
+        done
+    fi
 else echo "Proton/prefix not found: run the game once, then re-run install.sh"; fi
 if [ -d "$GAME" ]; then install -Dm644 game/override.cfg "$GAME/override.cfg"; echo "override.cfg -> $GAME"
 else echo "Game folder not found ($GAME). Copy game/override.cfg next to YourWife.exe yourself."; fi

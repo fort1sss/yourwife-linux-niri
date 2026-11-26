@@ -55,6 +55,52 @@ def place_toast(w):
     placed.add(w["id"])
 
 
+GAME = "steam_app_3339420"
+HIDE = 'vec4 window_color(vec3 coords_geo, vec3 size_geo) { return vec4(0.0); }'
+game_seen = {}     # id вікна гри без назви -> що вже зроблено
+menus = []         # відкриті меню гри (id, x, y, w, h) — підменю ставимо праворуч від попереднього
+
+
+def act(*a):
+    subprocess.run(["niri", "msg", "action", *a], capture_output=True)
+
+
+def handle_game_untitled(w):
+    """Вікна Your Wife без назви: смужка трею Wine (160x20) — невидима в правому нижньому куті;
+    решта — меню гри (рідне PopupMenu): плаваюче, біля курсора, підменю — праворуч від батьківського."""
+    if (w.get("app_id") or "") != GAME or w.get("title"):
+        return
+    wid = w["id"]
+    size = tuple(w["layout"].get("window_size") or (0, 0))
+    if size == (160, 20):
+        if game_seen.get(wid) != "tray":
+            subprocess.run(["niri", "msg", "window-shader", "set", "--id", str(wid), HIDE], capture_output=True)
+            game_seen[wid] = "tray"
+        return
+    if game_seen.get(wid) == "menu" or size[0] < 30:
+        return
+    game_seen[wid] = "menu"
+    if not w.get("is_floating"):
+        act("toggle-window-floating", "--id", str(wid))
+    out = next(iter(niri_json("outputs").values()))["logical"]
+    sw, sh = out["width"], out["height"]
+    cx, cy = json.loads(subprocess.run(["niri", "msg", "-j", "cursor-position"], capture_output=True, text=True).stdout or "[0,0]")
+    alive = {x["id"] for x in niri_json("windows")}
+    menus[:] = [m for m in menus if m[0] in alive]
+    if menus:
+        px, py, pw, ph = menus[-1][1:]
+        x, y = px + pw - 6, cy - 20
+        if x + size[0] > sw:
+            x = px - size[0] + 6
+    else:
+        x, y = cx + 2, cy + 2
+    x = min(max(x, 0), sw - size[0]); y = min(max(y, 0), sh - size[1])
+    cur = next((x2 for x2 in niri_json("windows") if x2["id"] == wid), None)
+    pos = (cur or w)["layout"].get("tile_pos_in_workspace_view") or (0, 0)
+    act("move-floating-window", "--id", str(wid), "-x", f"{int(x - pos[0]):+d}", "-y", f"{int(y - pos[1]):+d}")
+    menus.append((wid, x, y, size[0], size[1]))
+
+
 def main():
     try:
         sync()
@@ -77,8 +123,10 @@ def main():
                     with open(os.path.expanduser("~/.cache/niri-pin.log"), "a") as f:
                         f.write(f'{w["id"]} {w.get("title")!r} float={w.get("is_floating")} {w["layout"].get("window_size")}\n')
                 place_toast(w)
+                handle_game_untitled(w)
             elif "WindowClosed" in ev:
                 placed.discard(ev["WindowClosed"]["id"])
+                game_seen.pop(ev["WindowClosed"]["id"], None)
         except Exception:
             pass
 

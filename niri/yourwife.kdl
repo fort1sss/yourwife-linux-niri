@@ -15,10 +15,12 @@ window-rule {
     no-resize-animation true
 }
 
-// Wine's fallback tray strip (untitled 160x20 window): invisible, bottom-right corner.
+// Untitled game windows: Wine's fallback tray strip (160x20, niri-pin makes it invisible) and the game's
+// right-click menus (native Godot PopupMenu; niri-pin places them at the cursor). All of them float.
 window-rule {
     match app-id="^steam_app_3339420$" title="^$"
-    shader r"vec4 window_color(vec3 coords_geo, vec3 size_geo) { return vec4(0.0); }"
+    open-floating true
+    open-focused true
     default-floating-position x=0 y=0 relative-to="bottom-right"
 }
 
@@ -39,3 +41,11 @@ spawn-at-startup "xwayland-satellite" ":2"
 spawn-sh-at-startup "while true; do $HOME/.local/bin/niri-pin; sleep 2; done"
 // Eyes follow the cursor over the whole screen + window size sync for the game (restarts itself).
 spawn-sh-at-startup "while true; do $HOME/.local/bin/yw-gaze; sleep 2; done"
+
+// "Start with the system" from the game's settings (flag file linux_autostart in the game's user dir)
+spawn-sh-at-startup "sleep 6; [ -e \"$HOME/.local/share/Steam/steamapps/compatdata/3339420/pfx/drive_c/users/steamuser/AppData/Roaming/Godot/app_userdata/你的老婆/linux_autostart\" ] && $HOME/.local/bin/yourwife start"
+
+binds {
+    // show a hidden / unlock a locked character (on Windows this is done from the tray)
+    Mod+Ctrl+Y hotkey-overlay-title="Your Wife: show & unlock" { spawn-sh "$HOME/.local/bin/yourwife show"; }
+}

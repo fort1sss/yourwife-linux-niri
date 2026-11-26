@@ -7,6 +7,9 @@
 #   yourwife top on|off         — поверх усіх вікон
 #   yourwife lock on|off        — клік крізь героїню (мишка проходить до вікон під нею)
 #   yourwife reset              — стандартне місце, розмір і героїня 1
+#   yourwife show               — показати приховану й розблокувати героїню (також Mod+Ctrl+Y)
+#   yourwife theme light|dark|black [ОСН ДРУГ] — вигляд меню (кольори 0..7, див. меню «Вигляд меню»)
+#   yourwife autostart on|off   — запускати разом із системою (як у налаштуваннях гри)
 #   yourwife menu | settings | workshop | help — відкрити вікна гри
 #   yourwife emotions           — емоції й анімації поточної моделі
 #   yourwife expr НАЗВА         — показати емоцію (напр. Happy)
@@ -68,6 +71,10 @@ PY
          if running; then send top "$v"; else set_key always_on_top "$([ $v = off ] && echo false || echo true)"; fi ;;
   lock)  need_game; send lock "$([ "$2" = off ] && echo off || echo on)" ;;
   reset) need_game; send reset ;;
+  show)  need_game; send show ;;
+  theme) need_game; send theme "${*:2}" ;;
+  autostart) if [ "$2" = off ]; then rm -f "$D/linux_autostart"; echo "автозапуск вимкнено"
+             else echo 1 > "$D/linux_autostart"; echo "автозапуск увімкнено"; fi ;;
   menu|settings|workshop|help) need_game; send "$1" ;;
   emotions) need_game; send list-expr ;;
   expr)  need_game; send expr "${*:2}" ;;
@@ -81,5 +88,5 @@ PY
   stop)  stop ;;
   restart) stop; start ;;
   status|"") grep -h -E '^(character|scale|always_on_top|language)=' "$D/settings.cfg"; running && echo "гра запущена" || echo "гра закрита" ;;
-  *) sed -n '4,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '4,20p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac
