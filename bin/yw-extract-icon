@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+# Витягає іконку з YourWife.exe (ресурси PE) у тему іконок користувача як «yourwife» — для значка в треї.
+# Іконка належить грі, тому в репозиторії її немає: беремо з уже встановленої гри.
+#   yw-extract-icon /шлях/до/YourWife.exe
+import os, struct, subprocess, sys, tempfile
+
+
+def extract_ico(exe):
+    f = open(exe, "rb").read()
+    pe = struct.unpack_from("<I", f, 0x3C)[0]
+    nsec = struct.unpack_from("<H", f, pe + 6)[0]
+    optsz = struct.unpack_from("<H", f, pe + 20)[0]
+    opt = pe + 24
+    dd = opt + (112 if struct.unpack_from("<H", f, opt)[0] == 0x20B else 96)
+    rva = struct.unpack_from("<II", f, dd + 2 * 8)[0]
+    secs = [struct.unpack_from("<8sIIII", f, opt + optsz + i * 40) for i in range(nsec)]
+
+    def off(r):
+        for _, vs, va, rs, ro in secs:
+            if va <= r < va + max(vs, rs):
+                return r - va + ro
+
+    base = off(rva)
+
+    def entries(o):
+        nn, ni = struct.unpack_from("<HH", f, o + 12)
+        for i in range(nn + ni):
+            yield struct.unpack_from("<II", f, o + 16 + i * 8)
+
+    def leaf(ptr):
+        while ptr & 0x80000000:
+            ptr = next(entries(base + (ptr & 0x7FFFFFFF)))[1]
+        drva, dsz = struct.unpack_from("<II", f, base + ptr)
+        return f[off(drva):off(drva) + dsz]
+
+    types = dict(entries(base))
+    icons = {name: leaf(ptr) for name, ptr in entries(base + (types[3] & 0x7FFFFFFF))}      # RT_ICON
+    grp = leaf(next(entries(base + (types[14] & 0x7FFFFFFF)))[1])                         # RT_GROUP_ICON
+    cnt = struct.unpack_from("<HHH", grp, 0)[2]
+    ents = [struct.unpack_from("<BBBBHHIH", grp, 6 + i * 14) for i in range(cnt)]
+    out, data, o = struct.pack("<HHH", 0, 1, cnt), b"", 6 + 16 * cnt
+    for w, h, c, r, p, b, _, iid in ents:
+        d = icons[iid]
+        out += struct.pack("<BBBBHHII", w, h, c, r, p, b, len(d), o + len(data))
+        data += d
+    return out + data, [(e[0] or 256) for e in ents]
+
+
+def main():
+    exe = sys.argv[1]
+    ico, sizes = extract_ico(exe)
+    icons = os.path.expanduser("~/.local/share/icons/hicolor")
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "yw.ico")
+        open(p, "wb").write(ico)
+        for i, s in enumerate(sizes):
+            dst = os.path.join(icons, f"{s}x{s}", "apps")
+            os.makedirs(dst, exist_ok=True)
+            subprocess.run(["magick", f"{p}[{i}]", os.path.join(dst, "yourwife.png")], check=True)
+    subprocess.run(["gtk-update-icon-cache", "-f", "-t", icons], capture_output=True)
+    print("icon:", ", ".join(f"{s}px" for s in sizes))
+
+
+if __name__ == "__main__":
+    main()

@@ -2,7 +2,9 @@
 
 Як запустити **Your Wife** (Steam, app 3339420, аніме-компаньйон для робочого столу) на **Linux + niri (Wayland)** так, щоб вона виглядала й поводилась майже як на Windows.
 
-*English: scripts, niri rules, a shader and a small niri patch that make the Windows desktop-pet "Your Wife" usable on Linux/niri via Proton: transparent background, follows you across workspaces, eyes follow the cursor over the whole screen, no Steam hover glitches, and a CLI instead of the broken tray menu.*
+**[English README](README.en.md)**
+
+![Героїня на робочому столі niri](docs/desktop.webp)
 
 ## Що виправлено
 
@@ -11,7 +13,7 @@
 | Чорне вікно замість героїні (Godot D3D12 не створює swapchain під Proton) | `game/override.cfg` перемикає гру на Vulkan |
 | Чорний фон замість прозорого (вікна Wine 24-бітні, альфа-канал губиться) | параметр Wine `HKCU\Software\Wine\X11 Driver\ScreenDepth = "32"` (ставить `install.sh`): вікна гри стають ARGB і прозорість передається точно, як на Windows, включно з напівпрозорими частинами моделей. Запасний варіант: `game/linux_key.gd` малює фон #FF00FF, а шейдер `niri/magenta-key.frag` ([niri-shaders](https://github.com/Sileyesi/niri-shaders)) вирізає його |
 | Героїня прив'язана до одного робочого столу niri | `bin/niri-pin` переносить її за тобою на кожен стіл |
-| Очі не стежать за курсором (Wayland не дає програмам бачити курсор, Wine не оновлює позицію) | патч niri `niri msg cursor-position` + `bin/yw-gaze`: 30 разів/с шле у вікно гри синтетичний X MotionNotify |
+| Очі не стежать за курсором (Wayland не дає програмам бачити курсор, Wine не оновлює позицію) | патч niri `niri msg cursor-position` + `bin/yw-gaze`: шле у вікно гри синтетичний X MotionNotify — 30 разів/с, поки курсор рухається, і 4 рази/с, коли стоїть (майже 0% процесора) |
 | Наведення на героїню відкриває меню Steam (усі X-вікна в xwayland-satellite лежать у (0,0)) | окремий X-сервер для гри: `xwayland-satellite :2` + параметри запуску `DISPLAY=:2 %command%` |
 | При зміні розміру героїня обрізається, видно чорні/сірі смуги, вона двоїться або стрибає між двома розмірами | niri перевизначає розмір X-вікна, тож гра не може змінити його сама. `linux_key.gd` повідомляє бажаний розмір, `yw-gaze` (inotify) ставить ширину, висоту й зсув однією командою niri (ріст «від ніг», у межах екрана); поки вікно не доросло, гра малює героїню в масштабі справжнього вікна; фон X-вікна й колір заливки Godot — повністю прозорі; правило `no-resize-animation` (з патчу niri) вимикає анімацію зміни розміру лише для гри |
 | Гра з кожною зміною розміру «виїжджала» за екран і ховалась | `linux_key.gd` тримає уявлення гри про позицію вікна в (0,0) — реальним місцем керує niri |
@@ -24,27 +26,39 @@
 | Заставка Godot при запуску | `override.cfg`: `boot_splash/show_image=false`, прозорий фон заставки |
 | Майстерня фрізила гру (відкриття, «Підписатися», «Подробиці») | вікно Майстерні отримує прискорений скрипт-нащадок `game/linux_workshop_window.gd`: після підписки/відписки замінюється лише змінена картка замість перебудови всіх ~2300 елементів (було >1 с фрізу, стало ~0.2 с); реакція на зміну підписок зібрана в одну; прев'ю карток — зменшені копії зі Steam CDN (~18 КБ замість ~480 КБ); перебудова всіх карток після кожної сторінки відповіді Steam зібрана в одну (і не відбувається, поки вікно сховане); шрифти вікон гри не шукають символи через Wine; тема перефарбовує лише нові елементи. Лишаються короткі паузи від самих запитів до Steam через Proton |
 | Емоції скидались після перезапуску | ввімкнені емоції зберігаються окремо для кожного персонажа (`linux_expr.json`) і відновлюються при запуску та поверненні до персонажа |
-| Меню в треї не працює (кліки по треєві Wine не доходять) | `bin/yourwife`: вибір героїні, розмір, «поверх усіх вікон», старт/стоп |
+| Меню в треї не працює (кліки по треєві Wine не доходять) | `bin/yw-tray` — власний значок у треї waybar (StatusNotifierItem): лівий клік — меню гри, правий — приховати/показати, заблокувати, налаштування, Майстерня, довідка, вихід. Іконка береться з `YourWife.exe` при встановленні. Плюс `bin/yourwife` для терміналу |
+| Меню гри не закривалось кліком по порожньому столу | `bin/yw-menu-catcher`: поки меню відкрите, під вікнами лежить невидимий шар, клік по ньому закриває меню (`niri-pin` запускає й прибирає його) |
+| Над повноекранними вікнами (відео, ігри) героїні не видно | правило вікна `above-fullscreen` (патч niri): героїня лишається видимою й клікабельною, як «поверх усіх вікон» на Windows |
 | Біла смужка трею Wine | правило niri робить її невидимою |
 | Сповіщення Steam вилазять будь-де | правило niri + `niri-pin` ставлять їх у правий нижній кут |
 
+![Меню гри з повзунком розміру](docs/menu.webp)
+
+![Значок у треї waybar](docs/tray.webp)
+
 ## Вимоги
 
-- niri, зібраний з [niri-shaders](https://github.com/Sileyesi/niri-shaders) **з патчем** `patches/niri-yourwife.patch` (команда `niri msg cursor-position` і правило вікна `no-resize-animation`)
-- `xwayland-satellite`, Python 3, `libX11`, `libXtst`
+- niri — **працює й на звичайному**. Зібраний з патчем `patches/niri-yourwife.patch` (на основі [niri-shaders](https://github.com/Sileyesi/niri-shaders)) додає погляд за курсором, плавну зміну розміру й показ над повноекранними вікнами
+- `xwayland-satellite`, `python-gobject`, `gtk4-layer-shell`, `libxtst`, `imagemagick`, `noto-fonts-cjk`
 - Steam + Proton (перевірено на Proton Experimental 11)
 
 ## Встановлення
 
+**AUR** (коли буде опубліковано): `yay -S yourwife-linux-niri-git`, потім `yourwife-setup`. PKGBUILD — у [`packaging/aur`](packaging/aur).
+
+**З git:**
 ```bash
-# 1. niri-shaders з патчем
+git clone https://github.com/fort1sss/yourwife-linux-niri && cd yourwife-linux-niri
+./install.sh
+```
+`install.sh` ставить скрипти в `~/.local/bin`, правила niri, файли гри, параметри Wine й іконку для трею. Якщо niri без патча — сам прибирає правила, яких такий niri не знає.
+
+**Необов'язково — всі можливості (niri з патчем):**
+```bash
 git clone https://github.com/Sileyesi/niri-shaders && cd niri-shaders
 git apply /шлях/до/yourwife-linux-niri/patches/niri-yourwife.patch
 cargo build --release
 sudo install -Dm755 -s target/release/niri /usr/local/bin/niri
-
-# 2. Скрипти, правила niri, override.cfg + linux_key.gd для гри
-/шлях/до/yourwife-linux-niri/install.sh
 ```
 
 3. Steam → **Твоя дружина / Your Wife** → Властивості:
@@ -82,14 +96,14 @@ yourwife start|stop|restart|status
 
 - `niri/yourwife.kdl`: правила вікна гри. Не вішай на гру глобальні шейдери niri-shaders (напр. `preset:dissolve` на всі вікна) — вони малюють через проміжний буфер і при зміні розміру дають сірі смуги; додай `exclude app-id="^steam_app_3339420$"`.
 - Запасний режим прозорості (якщо `ScreenDepth=32` не спрацює): розкоментуй шейдер `magenta-key.frag` у `yourwife.kdl` і видали файл `linux_alpha` з теки гри в префіксі. `tolerance` — наскільки «пурпуровим» може бути колір моделі, щоб не ставати прозорим (0.3).
-- `bin/yw-gaze`: `HEAD` — на якій висоті вікна голова героїні (частка від верху), `HZ` — частота оновлення.
+- `bin/yw-gaze`: `HEAD` — на якій висоті вікна голова героїні (частка від верху), `HZ` / `IDLE_HZ` — частота оновлення, коли курсор рухається / стоїть.
 - `bin/niri-pin`: список `PINNED` — app-id вікон, які їздять за тобою по столах.
 
 ## Обмеження
 
-- Меню з трею не працює; меню, налаштування, Майстерню й довідку гри можна відкрити командами `yourwife menu|settings|workshop|help` або правим кліком по героїні.
 - Шпалери з гри не працюють (на niri шпалери малює swaybg/swww).
-- Над повноекранними вікнами героїню не видно (так niri показує плаваючі вікна).
+- Без патча niri героїню не видно над повноекранними вікнами (так niri показує плаваючі вікна).
+- Запити до Steam через Proton дають короткі паузи в Майстерні.
 
 ## Ліцензія
 

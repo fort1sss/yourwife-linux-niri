@@ -1,0 +1,26 @@
+pkgbase = yourwife-linux-niri-git
+	pkgdesc = Run the Steam desktop companion 'Your Wife' on Linux + niri: transparency, cursor gaze, tray, menus
+	pkgver = r0
+	pkgrel = 1
+	url = https://github.com/fort1sss/yourwife-linux-niri
+	install = yourwife-linux-niri.install
+	arch = any
+	license = MIT
+	makedepends = git
+	depends = niri
+	depends = xwayland-satellite
+	depends = python
+	depends = python-gobject
+	depends = gtk4-layer-shell
+	depends = libxtst
+	depends = imagemagick
+	depends = noto-fonts
+	depends = noto-fonts-cjk
+	depends = steam
+	optdepends = waybar: tray icon (any StatusNotifierItem tray works)
+	provides = yourwife-linux-niri
+	conflicts = yourwife-linux-niri
+	source = git+https://github.com/fort1sss/yourwife-linux-niri.git
+	sha256sums = SKIP
+
+pkgname = yourwife-linux-niri-git

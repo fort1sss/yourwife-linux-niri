@@ -9,6 +9,8 @@ import ctypes as C, ctypes.util, json, os, socket, subprocess, time
 
 APP = "steam_app_3339420"
 HZ = 30
+IDLE_HZ = 4          # частота, коли курсор нерухомий
+IDLE_AFTER = 1.5     # через скільки секунд без руху вважати курсор нерухомим
 GAME_DISPLAY = b":2"   # окремий X-сервер лише для гри (xwayland-satellite :2), щоб Steam не перехоплював наведення
 SIZE_FILE = os.path.expanduser("~/.local/share/Steam/steamapps/compatdata/3339420/pfx/drive_c/users/"
                                "steamuser/AppData/Roaming/Godot/app_userdata/你的老婆/linux_winsize.txt")
@@ -157,7 +159,7 @@ def apply_keys():
         keys = json.load(open(KEYS_FILE))
     except (OSError, ValueError):
         return
-    yw = os.path.expanduser("~/.local/bin/yourwife")
+    yw = os.path.join(os.path.dirname(os.path.realpath(__file__)), "yourwife")
     lines = ["// Згенеровано yw-gaze з налаштувань Your Wife (linux_keys.json). Не редагуй вручну.", "binds {"]
     acts = {"hide": ("Your Wife: приховати/показати", "togglehide"), "menu": ("Your Wife: меню", "menu")}
     for k, (title, cmd) in acts.items():
@@ -331,9 +333,11 @@ def main():
     global _game_for_size
     size_watcher()
     game, others, last_scan, last = None, [], 0.0, None
+    last_cur, moved_at = None, 0.0
     while True:
         now = time.monotonic()
-        if now - last_scan > (0.1 if menu_open else 0.4):
+        idle = now - moved_at > IDLE_AFTER
+        if now - last_scan > (0.1 if menu_open else 1.5 if idle else 0.4):
             last_scan = now
             wins = niri("Windows")["Windows"]
             ws = {w["id"]: w for w in niri("Workspaces")["Workspaces"]}
@@ -353,7 +357,15 @@ def main():
             time.sleep(1)
             continue
         _game_for_size = game
-        cx, cy = niri("CursorPosition")["CursorPosition"]
+        try:
+            cx, cy = niri("CursorPosition")["CursorPosition"]
+        except (KeyError, ValueError, TypeError):
+            # звичайний niri без патча (немає cursor-position): погляд за курсором не працює,
+            # але розмір вікна, клавіші й X-стос — так; просто рідко прокидаємось
+            time.sleep(1)
+            continue
+        if (cx, cy) != last_cur:
+            last_cur, moved_at = (cx, cy), now
         write_cursor(cx, cy, sw_out, sh_out)
         g = rect(game)
         if g and (xwin is None or xwin_size != (g[2], g[3])):
@@ -386,7 +398,8 @@ def main():
             if p != last:
                 send_motion(d, xwin, p[0], p[1])
                 last = p
-        time.sleep(1 / HZ)
+        # курсор стоїть — рідше питаємо niri (менше навантаження), щойно рушив — знову HZ разів/с
+        time.sleep(1 / IDLE_HZ if now - moved_at > IDLE_AFTER else 1 / HZ)
 
 
 if __name__ == "__main__":

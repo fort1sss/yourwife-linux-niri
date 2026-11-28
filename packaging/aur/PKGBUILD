@@ -1,0 +1,39 @@
+# Maintainer: fort1sss
+pkgname=yourwife-linux-niri-git
+pkgver=r0
+pkgrel=1
+pkgdesc="Run the Steam desktop companion 'Your Wife' on Linux + niri: transparency, cursor gaze, tray, menus"
+arch=('any')
+url="https://github.com/fort1sss/yourwife-linux-niri"
+license=('MIT')
+depends=('niri' 'xwayland-satellite' 'python' 'python-gobject' 'gtk4-layer-shell' 'libxtst' 'imagemagick'
+         'noto-fonts' 'noto-fonts-cjk' 'steam')
+makedepends=('git')
+optdepends=('waybar: tray icon (any StatusNotifierItem tray works)')
+provides=('yourwife-linux-niri')
+conflicts=('yourwife-linux-niri')
+install=yourwife-linux-niri.install
+source=("git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd yourwife-linux-niri
+    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+package() {
+    cd yourwife-linux-niri
+    for f in yourwife yw-gaze niri-pin yw-tray yw-menu-catcher yw-extract-icon; do
+        install -Dm755 "bin/$f" "$pkgdir/usr/bin/$f"
+    done
+    local share="$pkgdir/usr/share/yourwife-linux-niri"
+    install -Dm755 install.sh "$share/install.sh"
+    cp -r game niri patches "$share/"
+    install -Dm755 /dev/stdin "$pkgdir/usr/bin/yourwife-setup" <<'SH'
+#!/bin/sh
+exec /usr/share/yourwife-linux-niri/install.sh --system "$@"
+SH
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 README.en.md "$pkgdir/usr/share/doc/$pkgname/README.en.md"
+}

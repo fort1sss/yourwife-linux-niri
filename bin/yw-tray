@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+# Your Wife: значок у треї waybar (StatusNotifierItem) замість трею Wine, до якого на Wayland кліки
+# не доходять. Видно лише поки гра запущена. Лівий клік — меню гри біля курсора, правий — меню трею.
+# Усі дії — через yourwife (команди виконуються в запущеній грі без перезапуску).
+import os, subprocess
+from gi.repository import Gio, GLib
+
+YW = os.path.join(os.path.dirname(os.path.realpath(__file__)), "yourwife")   # поруч із цим скриптом
+GAME_DIR = os.path.expanduser("~/.local/share/Steam/steamapps/compatdata/3339420/pfx/drive_c/users/"
+                              "steamuser/AppData/Roaming/Godot/app_userdata/你的老婆")
+ITEM_PATH, MENU_PATH = "/StatusNotifierItem", "/MenuBar"
+
+SNI_XML = """<node><interface name="org.kde.StatusNotifierItem">
+ <property name="Category" type="s" access="read"/><property name="Id" type="s" access="read"/>
+ <property name="Title" type="s" access="read"/><property name="Status" type="s" access="read"/>
+ <property name="IconName" type="s" access="read"/><property name="IconThemePath" type="s" access="read"/>
+ <property name="ToolTip" type="(sa(iiay)ss)" access="read"/>
+ <property name="ItemIsMenu" type="b" access="read"/><property name="Menu" type="o" access="read"/>
+ <method name="Activate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+ <method name="SecondaryActivate"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+ <method name="ContextMenu"><arg type="i" direction="in"/><arg type="i" direction="in"/></method>
+ <method name="Scroll"><arg type="i" direction="in"/><arg type="s" direction="in"/></method>
+ <signal name="NewStatus"><arg type="s"/></signal><signal name="NewIcon"/><signal name="NewToolTip"/>
+</interface></node>"""
+
+MENU_XML = """<node><interface name="com.canonical.dbusmenu">
+ <property name="Version" type="u" access="read"/><property name="TextDirection" type="s" access="read"/>
+ <property name="Status" type="s" access="read"/><property name="IconThemePath" type="as" access="read"/>
+ <method name="GetLayout"><arg type="i" direction="in"/><arg type="i" direction="in"/><arg type="as" direction="in"/>
+  <arg type="u" direction="out"/><arg type="(ia{sv}av)" direction="out"/></method>
+ <method name="GetGroupProperties"><arg type="ai" direction="in"/><arg type="as" direction="in"/>
+  <arg type="a(ia{sv})" direction="out"/></method>
+ <method name="GetProperty"><arg type="i" direction="in"/><arg type="s" direction="in"/><arg type="v" direction="out"/></method>
+ <method name="Event"><arg type="i" direction="in"/><arg type="s" direction="in"/><arg type="v" direction="in"/><arg type="u" direction="in"/></method>
+ <method name="EventGroup"><arg type="a(isvu)" direction="in"/><arg type="ai" direction="out"/></method>
+ <method name="AboutToShow"><arg type="i" direction="in"/><arg type="b" direction="out"/></method>
+ <method name="AboutToShowGroup"><arg type="ai" direction="in"/><arg type="ai" direction="out"/><arg type="ai" direction="out"/></method>
+ <signal name="LayoutUpdated"><arg type="u"/><arg type="i"/></signal>
+</interface></node>"""
+
+
+def yw(*args):
+    subprocess.Popen([YW, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def running():
+    return subprocess.run(["pgrep", "-f", "YourWife[R]untime.exe"], capture_output=True).returncode == 0
+
+
+def locked():
+    return os.path.exists(os.path.join(GAME_DIR, "linux_lock"))
+
+
+# (id, підпис, дія) ; None — роздільник
+def items():
+    return [
+        (1, "Меню гри", lambda: yw("menu")),
+        (2, "Приховати / показати персонажа", lambda: yw("togglehide")),
+        (3, "Розблокувати персонажа" if locked() else "Заблокувати на цьому столі", lambda: yw("togglelock")),
+        None,
+        (4, "Налаштування", lambda: yw("settings")),
+        (5, "Майстерня", lambda: yw("workshop")),
+        (6, "Довідка", lambda: yw("help")),
+        None,
+        (7, "Вийти з гри", lambda: yw("stop")),
+    ]
+
+
+class Tray:
+    def __init__(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self.status = "Passive"
+        self.rev = 1
+        sni = Gio.DBusNodeInfo.new_for_xml(SNI_XML).interfaces[0]
+        menu = Gio.DBusNodeInfo.new_for_xml(MENU_XML).interfaces[0]
+        self.bus.register_object(ITEM_PATH, sni, self.sni_call, self.sni_prop, None)
+        self.bus.register_object(MENU_PATH, menu, self.menu_call, self.menu_prop, None)
+        self.name = f"org.kde.StatusNotifierItem-{os.getpid()}-1"
+        Gio.bus_own_name_on_connection(self.bus, self.name, Gio.BusNameOwnerFlags.NONE, None, None)
+        # watcher (waybar) може перезапуститись — тоді реєструємось знову
+        Gio.bus_watch_name_on_connection(self.bus, "org.kde.StatusNotifierWatcher", Gio.BusNameWatcherFlags.NONE,
+                                         lambda *_: self.register(), None)
+        self.poll()
+        GLib.timeout_add_seconds(3, self.poll)
+
+    def register(self):
+        self.bus.call("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", "org.kde.StatusNotifierWatcher",
+                      "RegisterStatusNotifierItem", GLib.Variant("(s)", (self.name,)), None,
+                      Gio.DBusCallFlags.NONE, -1, None, None)
+
+    def emit(self, path, iface, sig, params=None):
+        self.bus.emit_signal(None, path, iface, sig, params)
+
+    def poll(self):
+        st = "Active" if running() else "Passive"     # Passive — waybar значок не показує
+        if st != self.status:
+            self.status = st
+            self.emit(ITEM_PATH, "org.kde.StatusNotifierItem", "NewStatus", GLib.Variant("(s)", (st,)))
+        return True
+
+    # ── StatusNotifierItem
+    def sni_prop(self, conn, sender, path, iface, prop):
+        v = {"Category": ("s", "ApplicationStatus"), "Id": ("s", "yourwife"), "Title": ("s", "Your Wife"),
+             "Status": ("s", self.status), "IconName": ("s", "yourwife"), "IconThemePath": ("s", ""),
+             "ToolTip": ("(sa(iiay)ss)", ("yourwife", [], "Your Wife", "ЛКМ — меню гри, ПКМ — дії")),
+             "ItemIsMenu": ("b", False), "Menu": ("o", MENU_PATH)}.get(prop)
+        return GLib.Variant(*v) if v else None
+
+    def sni_call(self, conn, sender, path, iface, method, params, inv):
+        if method == "Activate":
+            yw("menu")
+        elif method == "SecondaryActivate":
+            yw("togglehide")
+        inv.return_value(None)
+
+    # ── com.canonical.dbusmenu
+    def menu_prop(self, conn, sender, path, iface, prop):
+        v = {"Version": ("u", 3), "TextDirection": ("s", "ltr"), "Status": ("s", "normal"),
+             "IconThemePath": ("as", [])}.get(prop)
+        return GLib.Variant(*v) if v else None
+
+    def node(self, it, n):
+        if it is None:
+            return GLib.Variant("(ia{sv}av)", (1000 + n, {"type": GLib.Variant("s", "separator")}, []))
+        return GLib.Variant("(ia{sv}av)", (it[0], {"label": GLib.Variant("s", it[1]),
+                                                   "enabled": GLib.Variant("b", True),
+                                                   "visible": GLib.Variant("b", True)}, []))
+
+    def menu_call(self, conn, sender, path, iface, method, params, inv):
+        its = items()
+        if method == "GetLayout":
+            children = [self.node(it, n) for n, it in enumerate(its)]
+            root = (0, {"children-display": GLib.Variant("s", "submenu")}, children)
+            inv.return_value(GLib.Variant("(u(ia{sv}av))", (self.rev, root)))
+        elif method == "GetGroupProperties":
+            ids = params.unpack()[0]
+            out = [(it[0], {"label": GLib.Variant("s", it[1])}) for it in its if it and it[0] in ids]
+            inv.return_value(GLib.Variant("(a(ia{sv}))", (out,)))
+        elif method == "GetProperty":
+            inv.return_value(GLib.Variant("(v)", (GLib.Variant("s", ""),)))
+        elif method in ("Event", "EventGroup"):
+            evs = [params.unpack()[:2]] if method == "Event" else [e[:2] for e in params.unpack()[0]]
+            for iid, ev in evs:
+                if ev == "clicked":
+                    it = next((x for x in its if x and x[0] == iid), None)
+                    if it:
+                        it[2]()
+            inv.return_value(None if method == "Event" else GLib.Variant("(ai)", ([],)))
+        elif method == "AboutToShow":
+            # підпис «Заблокувати/Розблокувати» залежить від стану — оновити, лише якщо він змінився
+            changed = locked() != getattr(self, "_lk", None)
+            self._lk = locked()
+            if changed:
+                self.rev += 1
+                self.emit(MENU_PATH, "com.canonical.dbusmenu", "LayoutUpdated", GLib.Variant("(ui)", (self.rev, 0)))
+            inv.return_value(GLib.Variant("(b)", (changed,)))
+        elif method == "AboutToShowGroup":
+            inv.return_value(GLib.Variant("(aiai)", ([], [])))
+        else:
+            inv.return_value(None)
+
+
+if __name__ == "__main__":
+    Tray()
+    GLib.MainLoop().run()

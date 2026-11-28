@@ -1,0 +1,8 @@
+post_install() {
+    echo ">>> Per-user setup (game scripts, Wine settings, niri rules, tray icon): run  yourwife-setup"
+    echo ">>> Optional: build niri with /usr/share/yourwife-linux-niri/patches/niri-yourwife.patch"
+    echo "    for cursor gaze, smooth resizing and staying above fullscreen windows."
+}
+post_upgrade() {
+    echo ">>> Run  yourwife-setup  again to update the game scripts."
+}

@@ -1,14 +1,17 @@
 diff --git a/niri-config/src/window_rule.rs b/niri-config/src/window_rule.rs
-index e0cca9e..4c1f312 100644
+index e0cca9e..c978195 100644
 --- a/niri-config/src/window_rule.rs
 +++ b/niri-config/src/window_rule.rs
-@@ -68,6 +68,9 @@ pub struct WindowRule {
+@@ -68,6 +68,12 @@ pub struct WindowRule {
      pub clip_to_geometry: Option<bool>,
      #[knuffel(child, unwrap(argument))]
      pub baba_is_float: Option<bool>,
 +    /// Skip niri's window-resize animation for this window (apps that resize themselves often).
 +    #[knuffel(child, unwrap(argument))]
 +    pub no_resize_animation: Option<bool>,
++    /// Keep this floating window visible (and clickable) above a fullscreen window.
++    #[knuffel(child, unwrap(argument))]
++    pub above_fullscreen: Option<bool>,
      #[knuffel(child)]
      pub block_out_from: Option<BlockOutFrom>,
      #[knuffel(child, unwrap(argument))]
@@ -99,6 +102,37 @@ index 9ac3f06..3eb44b1 100644
          Request::EventStream => Response::Handled,
          Request::OverviewState => {
              let state = ctx.event_stream_state.borrow();
+diff --git a/src/layout/floating.rs b/src/layout/floating.rs
+index 029cd69..a5a133b 100644
+--- a/src/layout/floating.rs
++++ b/src/layout/floating.rs
+@@ -1205,6 +1205,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
+         view_rect: Rectangle<f64, Logical>,
+         focus_ring: bool,
+         layer: RenderLayer,
++        only_above_fullscreen: bool,
+         push: &mut dyn FnMut(FloatingSpaceRenderElement<R>),
+     ) {
+         let scale = Scale::from(self.scale);
+@@ -1212,7 +1213,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
+         // Draw the closing windows on top of the other windows.
+         //
+         // FIXME: I guess this should rather preserve the stacking order when the window is closed.
+-        if layer.is_normal() {
++        if layer.is_normal() && !only_above_fullscreen {
+             for closing in self.closing_windows.iter().rev() {
+                 if let Some(elem) = closing.render(ctx.as_gles(), view_rect, scale) {
+                     push(elem.into());
+@@ -1226,6 +1227,9 @@ impl<W: LayoutElement> FloatingSpace<W> {
+             if layer.is_normal() == tile.is_moving_between_workspaces() {
+                 continue;
+             }
++            if only_above_fullscreen && tile.window().rules().above_fullscreen != Some(true) {
++                continue;
++            }
+ 
+             // For the active tile, draw the focus ring.
+             let focus_ring = focus_ring && Some(tile.window().id()) == active.as_ref();
 diff --git a/src/layout/tile.rs b/src/layout/tile.rs
 index edf2220..362cac8 100644
 --- a/src/layout/tile.rs
@@ -114,26 +148,92 @@ index edf2220..362cac8 100644
                  let anim = Animation::new(
                      self.clock.clone(),
                      0.,
+diff --git a/src/layout/workspace.rs b/src/layout/workspace.rs
+index 45e8e16..fa5548f 100644
+--- a/src/layout/workspace.rs
++++ b/src/layout/workspace.rs
+@@ -1710,7 +1710,10 @@ impl<W: LayoutElement> Workspace<W> {
+ 
+         let floating = self.floating.tiles_with_render_positions();
+         let visible = self.is_floating_visible();
+-        let floating = floating.map(move |(tile, pos)| (tile, pos, visible));
++        let floating = floating.map(move |(tile, pos)| {
++            let v = visible || tile.window().rules().above_fullscreen == Some(true);
++            (tile, pos, v)
++        });
+ 
+         floating.chain(scrolling)
+     }
+@@ -1773,9 +1776,9 @@ impl<W: LayoutElement> Workspace<W> {
+         layer: RenderLayer,
+         push: &mut dyn FnMut(WorkspaceRenderElement<R>),
+     ) {
+-        if !self.is_floating_visible() && layer.is_normal() {
+-            return;
+-        }
++        // Floating windows hide under a focused fullscreen window, except the ones with the
++        // above-fullscreen rule (desktop companions, on-screen widgets).
++        let only_above = !self.is_floating_visible() && layer.is_normal();
+ 
+         let view_rect = Rectangle::from_size(self.view_size);
+         let floating_focus_ring = focus_ring && self.floating_is_active();
+@@ -1785,6 +1788,7 @@ impl<W: LayoutElement> Workspace<W> {
+             view_rect,
+             floating_focus_ring,
+             layer,
++            only_above,
+             &mut |elem| push(elem.into()),
+         );
+     }
+@@ -1886,14 +1890,14 @@ impl<W: LayoutElement> Workspace<W> {
+ 
+     pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<(&W, HitType)> {
+         // This logic is consistent with tiles_with_render_positions().
+-        if self.is_floating_visible() {
+-            if let Some(rv) = self
+-                .floating
+-                .tiles_with_render_positions()
+-                .find_map(|(tile, tile_pos)| HitType::hit_tile(tile, tile_pos, pos))
+-            {
+-                return Some(rv);
+-            }
++        let visible = self.is_floating_visible();
++        if let Some(rv) = self
++            .floating
++            .tiles_with_render_positions()
++            .filter(|(tile, _)| visible || tile.window().rules().above_fullscreen == Some(true))
++            .find_map(|(tile, tile_pos)| HitType::hit_tile(tile, tile_pos, pos))
++        {
++            return Some(rv);
+         }
+ 
+         self.scrolling.window_under(pos)
 diff --git a/src/window/mod.rs b/src/window/mod.rs
-index 16fe7a4..5c46a4e 100644
+index 16fe7a4..4a9fb7a 100644
 --- a/src/window/mod.rs
 +++ b/src/window/mod.rs
-@@ -111,6 +111,9 @@ pub struct ResolvedWindowRules {
+@@ -111,6 +111,12 @@ pub struct ResolvedWindowRules {
      /// Whether to bob this window up and down.
      pub baba_is_float: Option<bool>,
  
 +    /// Whether to skip the window-resize animation for this window.
 +    pub no_resize_animation: Option<bool>,
 +
++    /// Whether this floating window stays visible above a fullscreen window.
++    pub above_fullscreen: Option<bool>,
++
      /// Whether to block out this window from certain render targets.
      pub block_out_from: Option<BlockOutFrom>,
  
-@@ -306,6 +309,9 @@ impl ResolvedWindowRules {
+@@ -306,6 +312,12 @@ impl ResolvedWindowRules {
                  if let Some(x) = rule.baba_is_float {
                      resolved.baba_is_float = Some(x);
                  }
 +                if let Some(x) = rule.no_resize_animation {
 +                    resolved.no_resize_animation = Some(x);
++                }
++                if let Some(x) = rule.above_fullscreen {
++                    resolved.above_fullscreen = Some(x);
 +                }
                  if let Some(x) = rule.block_out_from {
                      resolved.block_out_from = Some(x);
