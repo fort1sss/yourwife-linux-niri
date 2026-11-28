@@ -14,8 +14,19 @@ window-rule {
     draw-border-with-background false
     // the game resizes its window itself — no niri animation, otherwise the character doubles
     no-resize-animation true // needs-patch
-    // stay visible and clickable above fullscreen windows (video, games), like "always on top" on Windows
+    // stay visible and clickable above fullscreen windows (video, games) and above other floating
+    // windows, like "always on top" on Windows; the game's own windows keep their order among themselves
     above-fullscreen true // needs-patch
+}
+
+// The character's own window (its title arrives from Wine as "???? ???????"): clicks and scrolls reach her,
+// but she never becomes the focused window, so Mod+F, Mod+M etc. keep acting on your window.
+window-rule {
+    match app-id="^steam_app_3339420$" title=r"^\?{4} \?{7}$"
+    open-focused false
+    no-focus true // needs-patch
+    // Wine asks to activate the window on every click (SetForegroundWindow) — ignore it
+    on-xdg-activate "ignore"
 }
 
 // Untitled game windows: Wine's fallback tray strip (160x20, niri-pin makes it invisible) and the game's

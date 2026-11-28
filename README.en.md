@@ -40,7 +40,9 @@ Make **Your Wife** (Steam app 3339420, a Live2D anime desktop companion for Wind
 | The game menu took 2–20 s to open (it creates a `SystemFont` per row, which is slow under Wine) | `game/linux_key.gd` swaps the menu window's script for `game/linux_menu.gd`: one window, same items and actions, ~10 ms |
 | Clicking outside the menu doesn't close it | `niri-pin` closes it when focus moves to another window; `yw-menu-catcher` adds an invisible layer under the windows that catches clicks on the empty desktop |
 | The Wine tray doesn't work | `bin/yw-tray` provides a StatusNotifierItem with the same actions; its icon is extracted from `YourWife.exe` at install time |
-| Floating windows hide under a fullscreen window | `above-fullscreen` window rule (patch) |
+| Floating windows hide under a fullscreen window, and other floating windows (Mod+G) cover her | `above-fullscreen` window rule (patch): she stays visible and clickable above fullscreen windows and above other floating windows; the game's own windows (menu, settings) keep their usual order |
+| Clicking her made her the focused window, so Mod+F, Mod+M etc. acted on her | `no-focus` rule (patch) + `on-xdg-activate "ignore"`: clicks and scrolls reach the game, but focus stays on your window |
+| At startup her window sometimes stayed screen-sized and, though transparent, blocked clicks | `linux_key.gd` re-applies her size 3 and 8 s after start |
 | Workshop freezes | `game/linux_workshop_window.gd` reuses unchanged cards, merges rebuilds, skips work while hidden and loads small preview images from the Steam CDN |
 
 ## Requirements

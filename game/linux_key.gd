@@ -82,6 +82,22 @@ func _fit_to_actual() -> void:
 		_fit_scale = r
 		get_tree().root.canvas_transform = Transform2D.IDENTITY.scaled(Vector2(r, r))
 
+# При запуску гра відкриває вікно на весь екран і не завжди зменшує його до героїні: прозоре вікно
+# 1920x1044 перекривало б кліки по всьому екрану. Через 3 і 8 с після старту ще раз задаємо розмір героїні.
+# Той самий масштаб гра ігнорує, тож спершу трохи інший (+0.1%), а за 0.3 с — справжній.
+var _fit_marks := [[3000, 1.001], [3300, 1.0], [8000, 1.001], [8300, 1.0]]
+var _fit_base := -1.0
+func _startup_fit() -> void:
+	if _fit_marks.is_empty() or Time.get_ticks_msec() < int(_fit_marks[0][0]):
+		return
+	var k: float = _fit_marks.pop_front()[1]
+	var pet := _pet()
+	if pet == null or pet.get("_character_scale") == null:
+		return
+	if _fit_base < 0.0:
+		_fit_base = float(pet._character_scale)   # масштаб із налаштувань — запам'ятати до першої зміни
+	pet._resize_character(clampf(_fit_base * k, 0.55, max_safe_scale()))
+
 var _spikes: Array = []
 var _last_event := ""
 var _last_tick := 0
@@ -94,6 +110,7 @@ func _process(delta: float) -> void:
 	_last_tick = now
 	_report_size()
 	_guard_scale()
+	_startup_fit()
 	_watch_model_expr(delta)
 	_fit_to_actual()
 	_hold_expression()

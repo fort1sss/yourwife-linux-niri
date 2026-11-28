@@ -1,8 +1,8 @@
 diff --git a/niri-config/src/window_rule.rs b/niri-config/src/window_rule.rs
-index e0cca9e..c978195 100644
+index e0cca9e..41c6e41 100644
 --- a/niri-config/src/window_rule.rs
 +++ b/niri-config/src/window_rule.rs
-@@ -68,6 +68,12 @@ pub struct WindowRule {
+@@ -68,6 +68,15 @@ pub struct WindowRule {
      pub clip_to_geometry: Option<bool>,
      #[knuffel(child, unwrap(argument))]
      pub baba_is_float: Option<bool>,
@@ -12,6 +12,9 @@ index e0cca9e..c978195 100644
 +    /// Keep this floating window visible (and clickable) above a fullscreen window.
 +    #[knuffel(child, unwrap(argument))]
 +    pub above_fullscreen: Option<bool>,
++    /// Clicks and scrolls reach the window, but it never becomes the focused/active window.
++    #[knuffel(child, unwrap(argument))]
++    pub no_focus: Option<bool>,
      #[knuffel(child)]
      pub block_out_from: Option<BlockOutFrom>,
      #[knuffel(child, unwrap(argument))]
@@ -50,6 +53,37 @@ index 095b867..0c81680 100644
      /// Pick a window with the mouse and print information about it.
      PickWindow,
      /// Pick a color from the screen with the mouse.
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index a8841c7..9001293 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -3416,6 +3416,8 @@ impl State {
+ 
+             if let Some(mapped) = self.niri.window_under_cursor() {
+                 let window = mapped.window.clone();
++                // no-focus windows (desktop companions): the click goes to the window, focus stays.
++                let no_focus = mapped.rules().no_focus == Some(true);
+ 
+                 // The title bars of floating windows: the buttons, and the title that moves the
+                 // window, or maximizes it on a double click.
+@@ -3489,7 +3491,7 @@ impl State {
+                     if is_overview_open || mod_down {
+                         let location = pointer.current_location();
+ 
+-                        if !is_overview_open {
++                        if !is_overview_open && !no_focus {
+                             self.niri.layout.activate_window(&window);
+                         }
+ 
+@@ -3587,7 +3589,7 @@ impl State {
+                     }
+                 }
+ 
+-                if !is_overview_open {
++                if !is_overview_open && !no_focus {
+                     self.niri.layout.activate_window(&window);
+                 }
+ 
 diff --git a/src/ipc/client.rs b/src/ipc/client.rs
 index b1180e3..9d9682e 100644
 --- a/src/ipc/client.rs
@@ -103,10 +137,47 @@ index 9ac3f06..3eb44b1 100644
          Request::OverviewState => {
              let state = ctx.event_stream_state.borrow();
 diff --git a/src/layout/floating.rs b/src/layout/floating.rs
-index 029cd69..a5a133b 100644
+index 029cd69..da3760d 100644
 --- a/src/layout/floating.rs
 +++ b/src/layout/floating.rs
-@@ -1205,6 +1205,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
+@@ -276,12 +276,36 @@ impl<W: LayoutElement> FloatingSpace<W> {
+         self.tiles.iter().any(Tile::are_transitions_ongoing) || !self.closing_windows.is_empty()
+     }
+ 
++    /// Windows with the above-fullscreen rule stay on top of the other floating windows; among
++    /// themselves they keep their order (so e.g. a companion's own menu stays above it).
++    fn keep_above_fullscreen_on_top(&mut self) {
++        let pinned = |t: &Tile<W>| t.window().rules().above_fullscreen == Some(true);
++        // Already ordered: no pinned tile after an unpinned one.
++        let first_unpinned = self.tiles.iter().position(|t| !pinned(t));
++        let misplaced = match first_unpinned {
++            Some(i) => self.tiles[i..].iter().any(pinned),
++            None => false,
++        };
++        if !misplaced {
++            return;
++        }
++        let mut order: Vec<usize> = (0..self.tiles.len()).collect();
++        order.sort_by_key(|&i| !pinned(&self.tiles[i]));
++        let mut tiles: Vec<Option<Tile<W>>> = self.tiles.drain(..).map(Some).collect();
++        let mut data: Vec<Option<Data>> = self.data.drain(..).map(Some).collect();
++        for i in order {
++            self.tiles.push(tiles[i].take().unwrap());
++            self.data.push(data[i].take().unwrap());
++        }
++    }
++
+     pub fn update_render_elements(
+         &mut self,
+         is_active: bool,
+         view_rect: Rectangle<f64, Logical>,
+         layer: RenderLayer,
+     ) {
++        self.keep_above_fullscreen_on_top();
+         let active = self.active_window_id.clone();
+         for (tile, offset) in self.tiles_with_offsets_mut() {
+             // Skip tiles belonging to a different render layer.
+@@ -1205,6 +1229,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
          view_rect: Rectangle<f64, Logical>,
          focus_ring: bool,
          layer: RenderLayer,
@@ -114,7 +185,7 @@ index 029cd69..a5a133b 100644
          push: &mut dyn FnMut(FloatingSpaceRenderElement<R>),
      ) {
          let scale = Scale::from(self.scale);
-@@ -1212,7 +1213,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
+@@ -1212,7 +1237,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
          // Draw the closing windows on top of the other windows.
          //
          // FIXME: I guess this should rather preserve the stacking order when the window is closed.
@@ -123,7 +194,7 @@ index 029cd69..a5a133b 100644
              for closing in self.closing_windows.iter().rev() {
                  if let Some(elem) = closing.render(ctx.as_gles(), view_rect, scale) {
                      push(elem.into());
-@@ -1226,6 +1227,9 @@ impl<W: LayoutElement> FloatingSpace<W> {
+@@ -1226,6 +1251,9 @@ impl<W: LayoutElement> FloatingSpace<W> {
              if layer.is_normal() == tile.is_moving_between_workspaces() {
                  continue;
              }
@@ -208,11 +279,28 @@ index 45e8e16..fa5548f 100644
          }
  
          self.scrolling.window_under(pos)
+diff --git a/src/niri.rs b/src/niri.rs
+index 25d71ff..fa066c5 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -3870,8 +3870,10 @@ impl Niri {
+ 
+             // The edges of floating windows stick out of them a little, over what's below.
+             if under.is_none() && !is_overview_open {
+-                if let Some((mapped, edges)) =
+-                    self.layout.floating_edge_under(output, pos_within_output)
++                if let Some((mapped, edges)) = self
++                    .layout
++                    .floating_edge_under(output, pos_within_output)
++                    .filter(|(m, _)| m.rules().no_focus != Some(true))
+                 {
+                     rv.resize_edge = Some((mapped.window.clone(), edges));
+                     return rv;
 diff --git a/src/window/mod.rs b/src/window/mod.rs
-index 16fe7a4..4a9fb7a 100644
+index 16fe7a4..87d1aa0 100644
 --- a/src/window/mod.rs
 +++ b/src/window/mod.rs
-@@ -111,6 +111,12 @@ pub struct ResolvedWindowRules {
+@@ -111,6 +111,15 @@ pub struct ResolvedWindowRules {
      /// Whether to bob this window up and down.
      pub baba_is_float: Option<bool>,
  
@@ -222,10 +310,13 @@ index 16fe7a4..4a9fb7a 100644
 +    /// Whether this floating window stays visible above a fullscreen window.
 +    pub above_fullscreen: Option<bool>,
 +
++    /// Whether clicking this window leaves keyboard focus where it was.
++    pub no_focus: Option<bool>,
++
      /// Whether to block out this window from certain render targets.
      pub block_out_from: Option<BlockOutFrom>,
  
-@@ -306,6 +312,12 @@ impl ResolvedWindowRules {
+@@ -306,6 +315,15 @@ impl ResolvedWindowRules {
                  if let Some(x) = rule.baba_is_float {
                      resolved.baba_is_float = Some(x);
                  }
@@ -234,6 +325,9 @@ index 16fe7a4..4a9fb7a 100644
 +                }
 +                if let Some(x) = rule.above_fullscreen {
 +                    resolved.above_fullscreen = Some(x);
++                }
++                if let Some(x) = rule.no_focus {
++                    resolved.no_focus = Some(x);
 +                }
                  if let Some(x) = rule.block_out_from {
                      resolved.block_out_from = Some(x);
