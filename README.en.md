@@ -54,7 +54,11 @@ Make **Your Wife** (Steam app 3339420, a Live2D anime desktop companion for Wind
 
 ## Install
 
-**AUR** (once published): `yay -S yourwife-linux-niri-git`, then run `yourwife-setup`. The PKGBUILD is in [`packaging/aur`](packaging/aur).
+**As an Arch package**: the PKGBUILD is in [`packaging/aur`](packaging/aur). AUR registration is closed for now, so build it yourself:
+```bash
+git clone https://github.com/fort1sss/yourwife-linux-niri && cd yourwife-linux-niri/packaging/aur && makepkg -si
+yourwife-setup
+```
 
 **From git:**
 ```bash

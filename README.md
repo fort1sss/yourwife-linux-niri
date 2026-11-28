@@ -44,7 +44,11 @@
 
 ## Встановлення
 
-**AUR** (коли буде опубліковано): `yay -S yourwife-linux-niri-git`, потім `yourwife-setup`. PKGBUILD — у [`packaging/aur`](packaging/aur).
+**Пакетом Arch** (PKGBUILD — у [`packaging/aur`](packaging/aur); в AUR зараз закрита реєстрація, тож поки збираємо самі):
+```bash
+git clone https://github.com/fort1sss/yourwife-linux-niri && cd yourwife-linux-niri/packaging/aur && makepkg -si
+yourwife-setup
+```
 
 **З git:**
 ```bash
